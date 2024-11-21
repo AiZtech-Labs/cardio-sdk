@@ -1,55 +1,58 @@
 import config from "./config";
 
+// Class representing the iSelfieTest instance
 class ISelfieTestInstance {
     constructor(_config) {
+        // Initialize class properties
         this.iframe = null;
         this.testType = '';
         this.resolveTest = null;
         this.rejectTest = null;
-        this.domain = window.location.origin;
+        this.domain = window.location.origin; // Get the current domain
         this.organization = null;
         this.success = false;
 
-        // Basic
-        this.apiKey = _config?.apiKey || '';
-        this.appUserId = _config?.appUserId || '';
-        this.containerId = _config?.containerId || 'iselfietest';
+        // Basic configuration
+        this.apiKey = _config?.apiKey || ''; // API key for validation
+        this.appUserId = _config?.appUserId || ''; // App user ID
+        this.containerId = _config?.containerId || 'iselfietest'; // ID of the container for the iframe
 
-        //Options
+        // Options for customizing the test
         this.options = {
-            displayResults: _config?.options?.displayResults || false,
-            enablePDFSharing: _config?.options?.enablePDFSharing || false,
-            timeZone: _config?.options?.timeZone || 'Etc/UTC',
-            disableAudio: _config?.options?.disableAudio || false,
-            language: _config?.options?.language || 'en',
-            isDarkMode: _config?.options?.isDarkMode ||  true,
-        }
+            displayResults: _config?.options?.displayResults || false, // Display results after test
+            enablePDFSharing: _config?.options?.enablePDFSharing || false, // Allow sharing results as PDF
+            timeZone: _config?.options?.timeZone || 'Etc/UTC', // Time zone for test
+            disableAudio: _config?.options?.disableAudio || false, // Disable audio during the test
+            language: _config?.options?.language || 'en', // Language for the test interface
+            isDarkMode: _config?.options?.isDarkMode || true, // Use dark mode by default
+        };
 
-        // Styles
+        // Styling options
         this.styles = {
-            pageBackgroundColor: _config?.styles?.pageBackgroundColor || '',
-            cardBackgroundColor: _config?.styles?.cardBackgroundColor || '',
-            cardHeaderBackgroundColor: _config?.styles?.cardHeaderBackgroundColor || '',
-            primaryTextColor: _config?.styles?.primaryTextColor || '',
-            secondaryTextColor: _config?.styles?.secondaryTextColor || '',
-            buttonColor: _config?.styles?.buttonColor || '',
-            buttonTextColor: _config?.styles?.buttonTextColor || '',
-            iconColor: _config?.styles?.iconColor || '',
-        } 
+            pageBackgroundColor: _config?.styles?.pageBackgroundColor || '', // Page background color
+            cardBackgroundColor: _config?.styles?.cardBackgroundColor || '', // Card background color
+            cardHeaderBackgroundColor: _config?.styles?.cardHeaderBackgroundColor || '', // Card header color
+            primaryTextColor: _config?.styles?.primaryTextColor || '', // Primary text color
+            secondaryTextColor: _config?.styles?.secondaryTextColor || '', // Secondary text color
+            buttonColor: _config?.styles?.buttonColor || '', // Button background color
+            buttonTextColor: _config?.styles?.buttonTextColor || '', // Button text color
+            iconColor: _config?.styles?.iconColor || '', // Icon color
+        };
     }
 
+    // Method to verify API key with the backend
     async verifyApiKey() {
         try {
             const response = await fetch(`${config.backend_url}/sdk/verify`, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Api-Key': this.apiKey
+                    'X-Api-Key': this.apiKey // Pass the API key in the request headers
                 },
             });
             const result = await response.json();
-            this.success = result.success;
-            this.organization = result.organization || null;
+            this.success = result.success; // Set success based on response
+            this.organization = result.organization || null; // Set organization details if available
             return this.success;
         } catch (error) {
             console.error('API call failed:', error);
@@ -58,33 +61,39 @@ class ISelfieTestInstance {
         }
     }
 
+    // Method to create and display the iframe for the test
     createIframe(container) {
         if (this.iframe) {
+            // If iframe already exists, send a message to it
             this.sendMessageToIframe();
             return;
         }
 
+        // Create the iframe element
         this.iframe = document.createElement('iframe');
-        this.iframe.id = 'iselfietest-iframe';
-        this.iframe.style.border = 'none';
-        this.iframe.style.width = '100%';
-        this.iframe.style.height = '100%';
-        this.iframe.allow = 'camera; microphone';
+        this.iframe.id = 'iselfietest-iframe'; // Set iframe ID
+        this.iframe.style.border = 'none'; // Remove border
+        this.iframe.style.width = '100%'; // Set full width
+        this.iframe.style.height = '100%'; // Set full height
+        this.iframe.allow = 'camera; microphone'; // Allow camera and microphone access
 
+        // Set the iframe source URL
         this.iframe.src = `${config.frontend_url}/sdk/before-cardio-test?isSDK=true`;
-        container.appendChild(this.iframe);
+        container.appendChild(this.iframe); // Append iframe to the container
 
         this.iframe.onload = () => {
             console.log("Iframe loaded, sending initial message to parent");
-            this.sendMessageToIframe();
+            this.sendMessageToIframe(); // Send initial message when iframe is loaded
         };
 
+        // Listen for messages from the iframe
         window.addEventListener('message', (event) => this.handleIncomingMessages(event), false);
     }
 
+    // Method to send initialization message to the iframe
     sendMessageToIframe() {
         const message = {
-            type: 'iselfietest-sdk-init',
+            type: 'iselfietest-sdk-init', // Message type
             data: {
                 apiKey: this.apiKey,
                 organization: {
@@ -111,9 +120,11 @@ class ISelfieTestInstance {
             }
         };
 
+        // Retry sending the message until acknowledged
         const retryInterval = setInterval(() => {
             this.iframe.contentWindow.postMessage(message, config.frontend_url);
 
+            // Check for acknowledgment from the iframe
             const acknowledgeMessage = (event) => {
                 if (event.data.type === 'iselfietest-sdk-ack') {
                     clearInterval(retryInterval);
@@ -125,33 +136,36 @@ class ISelfieTestInstance {
         }, 1000);
     }
 
+    // Method to handle incoming messages from the iframe
     handleIncomingMessages(event) {
         const { type, data } = event.data;
-        
-        if (type === 'iselfietest-close') this.closeTest();
+
+        if (type === 'iselfietest-close') this.closeTest(); // Close the test on 'close' message
 
         if (type === 'iselfietest-complete') {
-            this.resolveTest?.(data);
-            this.closeTest();
+            this.resolveTest?.(data); // Resolve the test promise with data
+            this.closeTest(); // Close the iframe
         }
 
         if (type === 'iselfietest-error') {
-            this.rejectTest?.(data);
-            this.closeTest();
+            this.rejectTest?.(data); // Reject the test promise with error data
+            this.closeTest(); // Close the iframe
         }
 
         console.log("Message received:", event.data);
     }
 
+    // Method to start the test
     startTest(testType) {
         return new Promise((resolve, reject) => {
-            this.resolveTest = resolve;
-            this.rejectTest = reject;
-            this.testType = testType;
+            this.resolveTest = resolve; // Set resolve handler
+            this.rejectTest = reject; // Set reject handler
+            this.testType = testType; // Set the type of test
     
+            // Try creating the iframe with retries
             const tryCreateIframe = (retryCount = 0) => {
                 const container = document.getElementById(this.containerId);
-    
+
                 if (container) {
                     this.createIframe(container);
                 } else if (retryCount < 3) {
@@ -164,16 +178,17 @@ class ISelfieTestInstance {
                     reject(new Error(`Container element with ID "${this.containerId}" not found.`));
                 }
             };
-    
+
             tryCreateIframe();
         });
-    }    
+    }
 
+    // Method to close the test and remove the iframe
     closeTest() {
         if (this.iframe) {
             const container = document.getElementById(this.containerId);
-            container?.removeChild(this.iframe);
-            this.iframe = null;
+            container?.removeChild(this.iframe); // Remove the iframe from the DOM
+            this.iframe = null; // Clear the iframe reference
             console.log("Iframe closed.");
         } else {
             console.log("No iframe to close.");
@@ -181,30 +196,31 @@ class ISelfieTestInstance {
     }
 }
 
-// Global instance
+// Global instance of the SDK
 let instance;
 
+// Function to initialize the SDK
 export default async function ISelfieTest(options) {
     if (instance) {
         console.warn("SDK is already initialized. Returning the existing instance.");
         return;
     }
 
-    instance = new ISelfieTestInstance(options);
-    const result = await instance.verifyApiKey();
+    instance = new ISelfieTestInstance(options); // Create a new SDK instance
+    const result = await instance.verifyApiKey(); // Verify the API key
     const message = result
         ? "SDK initialized successfully."
         : "Invalid API Key: SDK initialization failed. Please verify your credentials.";
     return {
         success: result,
         message,
-        startCardioTest: () => instance.startTest('Cardio'),
-        startCovidTest: () => instance.startTest('Covid'),
-        closeTest: () => instance.closeTest()
+        startCardioTest: () => instance.startTest('Cardio'), // Start a cardio test
+        startCovidTest: () => instance.startTest('Covid'), // Start a COVID test
+        closeTest: () => instance.closeTest() // Close the test
     };
 }
 
-// Export functions directly
+// Export test control functions
 export const startCardioTest = () => instance?.startTest('Cardio');
 export const startCovidTest = () => instance?.startTest('Covid');
 export const closeTest = () => instance?.closeTest();

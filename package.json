@@ -1,12 +1,17 @@
 {
-  "name": "cardio-sdk",
-  "version": "0.0.1",
-  "description": "An SDK for integrating IsSelfieTest",
-  "main": "index.js",
+  "name": "@aiztechlabs/cardio-sdk",
+  "version": "0.0.4",
+  "description": "A JavaScript SDK for integrating Cardio test.",
+  "main": "dist/iselfie-cardio-sdk.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "rollup -c"
   },
-  "keywords": ["sdk", "iselfietest", "cardio", "covid"],
+  "keywords": [
+    "sdk",
+    "iselfietest",
+    "cardio",
+    "covid"
+  ],
   "author": "AiZtech",
   "license": "MIT",
   "repository": {
@@ -17,5 +22,14 @@
     "url": "https://github.com/AiZtech-Labs/cardio-sdk/issues"
   },
   "homepage": "https://github.com/AiZtech-Labs/cardio-sdk#readme",
-  "dependencies": {}
+  "devDependencies": {
+    "@rollup/plugin-babel": "^6.0.4",
+    "@rollup/plugin-commonjs": "^28.0.1",
+    "@rollup/plugin-json": "^6.1.0",
+    "@rollup/plugin-node-resolve": "^15.3.0",
+    "@rollup/plugin-replace": "^6.0.1",
+    "dotenv": "^16.4.5",
+    "rollup": "^2.79.2",
+    "rollup-plugin-terser": "^7.0.2"
+  }
 }
