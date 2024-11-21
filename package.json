@@ -1,0 +1,21 @@
+{
+  "name": "cardio-sdk",
+  "version": "0.0.1",
+  "description": "An SDK for integrating IsSelfieTest",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["sdk", "iselfietest", "cardio", "covid"],
+  "author": "AiZtech",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AiZtech-Labs/cardio-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AiZtech-Labs/cardio-sdk/issues"
+  },
+  "homepage": "https://github.com/AiZtech-Labs/cardio-sdk#readme",
+  "dependencies": {}
+}
