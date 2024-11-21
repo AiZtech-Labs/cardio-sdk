@@ -1,4 +1,4 @@
-import config from "./config";
+import { dev, prod } from "./config";
 
 // Class representing the iSelfieTest instance
 class ISelfieTestInstance {
@@ -13,6 +13,7 @@ class ISelfieTestInstance {
         this.success = false;
 
         // Basic configuration
+        this.config = _config?.environment === "dev" ? dev : prod; // environment
         this.apiKey = _config?.apiKey || ''; // API key for validation
         this.appUserId = _config?.appUserId || ''; // App user ID
         this.containerId = _config?.containerId || 'iselfietest'; // ID of the container for the iframe
@@ -43,7 +44,7 @@ class ISelfieTestInstance {
     // Method to verify API key with the backend
     async verifyApiKey() {
         try {
-            const response = await fetch(`${config.backend_url}/sdk/verify`, {
+            const response = await fetch(`${this.config.backend_url}/sdk/verify`, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
@@ -78,7 +79,7 @@ class ISelfieTestInstance {
         this.iframe.allow = 'camera; microphone'; // Allow camera and microphone access
 
         // Set the iframe source URL
-        this.iframe.src = `${config.frontend_url}/sdk/before-cardio-test?isSDK=true`;
+        this.iframe.src = `${this.config.frontend_url}/sdk/before-cardio-test?isSDK=true`;
         container.appendChild(this.iframe); // Append iframe to the container
 
         this.iframe.onload = () => {
@@ -122,7 +123,7 @@ class ISelfieTestInstance {
 
         // Retry sending the message until acknowledged
         const retryInterval = setInterval(() => {
-            this.iframe.contentWindow.postMessage(message, config.frontend_url);
+            this.iframe.contentWindow.postMessage(message, this.config.frontend_url);
 
             // Check for acknowledgment from the iframe
             const acknowledgeMessage = (event) => {

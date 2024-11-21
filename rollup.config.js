@@ -25,6 +25,9 @@ export default {
             // Inject .env variables into the build
             'process.env.FRONTEND_URL': JSON.stringify(process.env.FRONTEND_URL),
             'process.env.BACKEND_URL': JSON.stringify(process.env.BACKEND_URL),
+            //Dev environment
+            'process.env.FRONTEND_DEV_URL': JSON.stringify(process.env.FRONTEND_DEV_URL),
+            'process.env.BACKEND_DEV_URL': JSON.stringify(process.env.BACKEND_DEV_URL),
         }),
         terser(),
     ],
