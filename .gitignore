@@ -1,0 +1,142 @@
+# Node.js dependencies
+/node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment variables
+.env
+.env.*.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+.log
+
+# Diagnostic reports
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+core
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Editor/IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*.bak
+*.tmp
+*.temp
+
+# Testing files
+/coverage
+
+# Build artifacts
+/build
+/dist
+/out
+/.next
+/.nuxt
+/.parcel-cache
+/.turbo
+
+# Temporary files
+*.tmp
+*.temp
+*.pid
+*.seed
+*.pid.lock
+
+# TypeScript
+*.tsbuildinfo
+
+# Generated files
+/public/**/*.js
+/public/**/*.css
+/public/**/*.map
+/public/assets
+/.expo
+
+# npm package files
+*.tgz
+
+# Miscellaneous
+*.log
+*.lock
+!.gitkeep
+*.lockfile
+.pnp/
+.pnp.js
+
+# Local npm cache files
+.npm
+
+# Yarn Integrity file
+.yarn-integrity
+
+# eslint cache
+.eslintcache
+
+# Stylelint cache
+.stylelintcache
+
+# Optional npm cache
+/.npm
+
+# Parcel-bundler cache (if using parcel)
+/.cache
+
+# SvelteKit (if using Svelte)
+/.svelte-kit
+
+# Remix (if using Remix)
+/build
+
+# Nuxt (if using Nuxt)
+/.nuxt
+
+# Storybook
+/.storybook-out
+
+# CI/CD cache
+.cache/
+coverage/
+
+# Output of 'npm pack'
+*.tgz
+
+# Binaries
+*.exe
+*.out
+*.app
+*.dmg
+*.zip
+*.iso
+
+# Python
+__pycache__/
+
+# React Native
+*.keystore
+/android/*
+/ios/*
+/*.gradle
+*.lock
+*.xcworkspace
+
+# Project-specific files
+/public/**/*.html
+/public/**/*.map
+/src/*.scss
+
+# Ignore all build outputs
+build/
+dist/
