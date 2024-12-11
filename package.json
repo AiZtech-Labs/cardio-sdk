@@ -1,8 +1,9 @@
 {
   "name": "@aiztechlabs/cardio-sdk",
-  "version": "0.0.7",
+  "version": "0.0.14",
   "description": "A JavaScript SDK for integrating Cardio test.",
-  "main": "dist/iselfie-cardio-sdk.js",
+  "main": "dist/iselfie-cardio-sdk.umd.min.js",
+  "module": "dist/iselfie-cardio-sdk.esm.js",
   "scripts": {
     "build": "rollup -c"
   },
@@ -10,7 +11,7 @@
     "sdk",
     "iselfietest",
     "cardio",
-    "covid"
+    "javascript-sdk"
   ],
   "author": "AiZtech",
   "license": "MIT",
@@ -22,6 +23,9 @@
     "url": "https://github.com/AiZtech-Labs/cardio-sdk/issues"
   },
   "homepage": "https://github.com/AiZtech-Labs/cardio-sdk#readme",
+  "files": [
+    "dist"
+  ],
   "devDependencies": {
     "@rollup/plugin-babel": "^6.0.4",
     "@rollup/plugin-commonjs": "^28.0.1",
