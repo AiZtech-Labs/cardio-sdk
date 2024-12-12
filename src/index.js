@@ -225,3 +225,12 @@ export default async function ISelfieTest(options) {
 export const startCardioTest = () => instance?.startTest('Cardio');
 export const startCovidTest = () => instance?.startTest('Covid');
 export const closeTest = () => instance?.closeTest();
+
+// Global UMD export for browser compatibility
+if (typeof window !== 'undefined') {
+    window.ISelfieCardioSDK = ISelfieTest;
+    window.ISelfieTest = ISelfieTest;
+    window.startCardioTest = startCardioTest;
+    window.startCovidTest = startCovidTest;
+    window.closeTest = closeTest;
+}
