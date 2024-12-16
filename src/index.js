@@ -5,7 +5,6 @@ class ISelfieTestInstance {
     constructor(_config) {
         // Initialize class properties
         this.iframe = null;
-        this.testType = '';
         this.resolveTest = null;
         this.rejectTest = null;
         this.domain = window.location.origin; // Get the current domain
@@ -20,12 +19,12 @@ class ISelfieTestInstance {
 
         // Options for customizing the test
         this.options = {
-            displayResults: _config?.options?.displayResults || false, // Display results after test
-            enablePDFSharing: _config?.options?.enablePDFSharing || false, // Allow sharing results as PDF
-            timeZone: _config?.options?.timeZone || 'Etc/UTC', // Time zone for test
-            disableAudio: _config?.options?.disableAudio || false, // Disable audio during the test
-            language: _config?.options?.language || 'en', // Language for the test interface
-            isDarkMode: _config?.options?.isDarkMode || true, // Use dark mode by default
+            displayResults: _config?.options?.displayResults ?? false, // Display results after test
+            enablePDFSharing: _config?.options?.enablePDFSharing ?? false, // Allow sharing results as PDF
+            timezone: _config?.options?.timezone ?? 'Etc/UTC', // Time zone for test
+            disableAudio: _config?.options?.disableAudio ?? false, // Disable audio during the test
+            language: _config?.options?.language ?? 'en', // Language for the test interface
+            isDarkMode: _config?.options?.isDarkMode ?? true, // Use dark mode by default
         };
 
         // Styling options
@@ -48,18 +47,75 @@ class ISelfieTestInstance {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Api-Key': this.apiKey // Pass the API key in the request headers
+                    'X-Api-Key': this.apiKey, // Pass the API key in the request headers
                 },
             });
             const result = await response.json();
-            this.success = result.success; // Set success based on response
-            this.organization = result.organization || null; // Set organization details if available
-            return this.success;
+            this.success = result.success;
+            this.organization = result.organization || null;
+            return result;
         } catch (error) {
-            console.error('API call failed:', error);
+            console.error('API call failed:', error.message ?? error);
             this.success = false;
             return false;
         }
+    }
+
+    // Fetch organization status
+    async fetchOrgStatus() {
+        try {
+            const response = await fetch(`${this.config.backend_url}/sdk/orgStatus`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Api-Key': this.apiKey,
+                },
+                body: JSON.stringify({
+                    organizationId: this.organization._id, // Include the orgId in the request body
+                }),
+            });
+            const result = await response.json();
+            return result.data; // Return orgStatus result
+        } catch (error) {
+            throw new Error('Failed to fetch organization status.');
+        }
+    }
+
+    // Fetch subscription list
+    async fetchSubscriptionList() {
+        if (!this.organization?._id) {
+            throw new Error('Organization ID not available.');
+        }
+        try {
+            const response = await fetch(`${this.config.backend_url}/subscription/sdk/${this.organization._id}/list`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Api-Key': this.apiKey,
+                },
+            });
+            const result = await response.json();
+            return result.subscriptions; // Return subscription list result
+        } catch (error) {
+            throw new Error('Failed to fetch subscription list.');
+        }
+    }
+
+    // Wrapper method to verify API key and call additional APIs
+    async initialize() {
+        const result = await this.verifyApiKey();
+        if (!result.success) {
+            throw new Error(`Verification failed: ${result.message}`);
+        }
+
+        // Fetch additional data
+        const orgStatus = await this.fetchOrgStatus();
+        const subscriptionList = await this.fetchSubscriptionList();
+
+        return {
+            orgStatus,
+            subscriptionList,
+        };
     }
 
     // Method to create and display the iframe for the test
@@ -108,16 +164,16 @@ class ISelfieTestInstance {
                 domain: this.domain,
                 options: this.options,
                 styles: {
-					"--background-pages": this.styles.pageBackgroundColor,
-					"--background-card": this.styles.cardBackgroundColor,
-					"--background-card-title": this.styles.cardHeaderBackgroundColor,
-					"--text-primary": this.styles.primaryTextColor,
-					"--text-secondary": this.styles.secondaryTextColor,
-					"--button-primary-background": this.styles.buttonColor,
-					"--border-focused": this.styles.buttonColor,
-					"--button-primary-text": this.styles.buttonTextColor,
-					"--icon-primary-background": this.styles.iconColor,
-				}
+                    "--background-pages": this.styles.pageBackgroundColor,
+                    "--background-card": this.styles.cardBackgroundColor,
+                    "--background-card-title": this.styles.cardHeaderBackgroundColor,
+                    "--text-primary": this.styles.primaryTextColor,
+                    "--text-secondary": this.styles.secondaryTextColor,
+                    "--button-primary-background": this.styles.buttonColor,
+                    "--border-focused": this.styles.buttonColor,
+                    "--button-primary-text": this.styles.buttonTextColor,
+                    "--icon-primary-background": this.styles.iconColor,
+                }
             }
         };
 
@@ -152,16 +208,13 @@ class ISelfieTestInstance {
             this.rejectTest?.(data); // Reject the test promise with error data
             this.closeTest(); // Close the iframe
         }
-
-        console.log("Message received:", event.data);
     }
 
     // Method to start the test
-    startTest(testType) {
+    startTest() {
         return new Promise((resolve, reject) => {
             this.resolveTest = resolve; // Set resolve handler
             this.rejectTest = reject; // Set reject handler
-            this.testType = testType; // Set the type of test
     
             // Try creating the iframe with retries
             const tryCreateIframe = (retryCount = 0) => {
@@ -207,23 +260,69 @@ export default async function ISelfieTest(options) {
         return;
     }
 
-    instance = new ISelfieTestInstance(options); // Create a new SDK instance
-    const result = await instance.verifyApiKey(); // Verify the API key
-    const message = result
-        ? "SDK initialized successfully."
-        : "Invalid API Key: SDK initialization failed. Please verify your credentials.";
-    return {
-        success: result,
-        message,
-        startCardioTest: () => instance.startTest('Cardio'), // Start a cardio test
-        startCovidTest: () => instance.startTest('Covid'), // Start a COVID test
-        closeTest: () => instance.closeTest() // Close the test
-    };
+    instance = new ISelfieTestInstance(options);
+
+    try {
+        // Verify API key and fetch additional data
+        const { orgStatus, subscriptionList } = await instance.initialize();
+
+        let cardioEnabled = false;
+
+        const accountType = orgStatus?.accountType;
+
+        const totalCardioTestCount = orgStatus?.totalCardioTestCount || 0;
+
+        if (accountType === 'free') {
+            cardioEnabled = true;
+        }
+        if (accountType === 'trial') {
+            
+            const cardioTrialTestLimit = instance.organization?.cardioTrialTestLimit || 0;
+            const remainingCardioTests = cardioTrialTestLimit - totalCardioTestCount;
+            if (remainingCardioTests > 0) {
+                cardioEnabled = true;
+            }
+        }
+        if (accountType === 'active') {
+            const { cardio } = orgStatus?.testLimitByCurrentSubscription;
+            const cardioCount = cardio.testLimit
+                ? cardio.testLimit.interval_count * cardio.testLimit.unit
+                : 0;
+            const remainingCardioTests = cardioCount - totalCardioTestCount;
+
+            if (remainingCardioTests > 0) {
+                cardioEnabled = true;
+            }
+        }
+
+        if(cardioEnabled) {
+            return {
+                success: true,
+                message: "SDK initialized successfully.",
+                orgStatus,
+                subscriptionList,
+                startCardioTest: () => instance.startTest(),
+                closeTest: () => instance.closeTest(),
+            };
+        } else {
+            return {
+                success: false,
+                message: "You have reached the maximum limit of cardio test usage policy. Please reach out to administrator.",
+                orgStatus,
+                subscriptionList,
+            };
+        }
+    } catch (error) {
+        console.error(error.message);
+        return {
+            success: false,
+            message: error.message,
+        };
+    }
 }
 
 // Export test control functions
-export const startCardioTest = () => instance?.startTest('Cardio');
-export const startCovidTest = () => instance?.startTest('Covid');
+export const startCardioTest = () => instance?.startTest();
 export const closeTest = () => instance?.closeTest();
 
 // Global UMD export for browser compatibility
@@ -231,6 +330,5 @@ if (typeof window !== 'undefined') {
     window.ISelfieCardioSDK = ISelfieTest;
     window.ISelfieTest = ISelfieTest;
     window.startCardioTest = startCardioTest;
-    window.startCovidTest = startCovidTest;
     window.closeTest = closeTest;
 }
