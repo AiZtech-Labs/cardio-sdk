@@ -19,12 +19,21 @@ class ISelfieTestInstance {
 
         // Options for customizing the test
         this.options = {
-            displayResults: _config?.options?.displayResults ?? false, // Display results after test
-            enablePDFSharing: _config?.options?.enablePDFSharing ?? false, // Allow sharing results as PDF
-            timezone: _config?.options?.timezone ?? 'Etc/UTC', // Time zone for test
+            displayResults: _config?.options?.displayResults ?? false, // Display results after the test is completed
+            enablePDFSharing: _config?.options?.enablePDFSharing ?? false, // Allow users to share their test results as a PDF document
+            timezone: _config?.options?.timezone ?? 'Etc/UTC', // Time zone used for displaying timestamps in the test results
             disableAudio: _config?.options?.disableAudio ?? false, // Disable audio during the test
-            language: _config?.options?.language ?? 'en', // Language for the test interface
-            isDarkMode: _config?.options?.isDarkMode ?? true, // Use dark mode by default
+            language: _config?.options?.language ?? 'en', // Language used for the test interface and instructions
+            isDarkMode: _config?.options?.isDarkMode ?? true, // Enable dark mode for the test UI by default
+            disableMotionDetection: _config?.options?.disableMotionDetection ?? false, // Disable motion detection during the test (if false, motion detection is enabled)
+            disableLightCheck: _config?.options?.disableLightCheck ?? false, // Disable light level check during the test (if false, light level will be checked)
+            disableDistanceCheck: _config?.options?.disableDistanceCheck ?? false, // Disable distance check during the test (if false, user’s distance from the camera will be checked)
+            terminateTestIfConditionPersisted: _config?.options?.terminateTestIfConditionPersisted ?? false, // Terminate the test if certain failure conditions persist during the test
+            testTerminationTimeOut: _config?.options?.testTerminationTimeOut ?? 7, // Timeout in seconds before terminating the test if a persistent condition is detected
+            instructionPage: _config?.options?.instructionPage ?? {
+                hidden: false, // Display an instruction page before the test starts
+                instructionContent: null, // Custom instruction page content
+            },
         };
 
         // Styling options
@@ -37,6 +46,7 @@ class ISelfieTestInstance {
             buttonColor: _config?.styles?.buttonColor || '', // Button background color
             buttonTextColor: _config?.styles?.buttonTextColor || '', // Button text color
             iconColor: _config?.styles?.iconColor || '', // Icon color
+            fontFace: _config?.styles?.fontFace || '', // Font Face
         };
     }
 
@@ -101,6 +111,48 @@ class ISelfieTestInstance {
         }
     }
 
+    // Check organization status
+    async checkOrgStatus() {
+        // Fetch additional data
+        const orgStatus = await this.fetchOrgStatus();
+        const subscriptionList = await this.fetchSubscriptionList();
+
+        let cardioEnabled = false;
+
+        const accountType = orgStatus?.accountType;
+
+        const totalCardioTestCount = orgStatus?.totalCardioTestCount || 0;
+
+        if (accountType === 'free') {
+            cardioEnabled = true;
+        }
+        if (accountType === 'trial') {
+            
+            const cardioTrialTestLimit = instance.organization?.cardioTrialTestLimit || 0;
+            const remainingCardioTests = cardioTrialTestLimit - totalCardioTestCount;
+            if (remainingCardioTests > 0) {
+                cardioEnabled = true;
+            }
+        }
+        if (accountType === 'active') {
+            const { cardio } = orgStatus?.testLimitByCurrentSubscription;
+            const cardioCount = cardio.testLimit
+                ? cardio.testLimit.interval_count * cardio.testLimit.unit
+                : 0;
+            const remainingCardioTests = cardioCount - totalCardioTestCount;
+
+            if (remainingCardioTests > 0) {
+                cardioEnabled = true;
+            }
+        }
+
+        const activeSubscriptions = subscriptionList.filter(
+            (sub) => sub?.productType === "cardio" && sub?.stripe?.status === "active"
+        );
+
+        return cardioEnabled && activeSubscriptions.length > 0 ? true : false;
+    }
+
     // Wrapper method to verify API key and call additional APIs
     async initialize() {
         const result = await this.verifyApiKey();
@@ -108,14 +160,9 @@ class ISelfieTestInstance {
             throw new Error(`Verification failed: ${result.message}`);
         }
 
-        // Fetch additional data
-        const orgStatus = await this.fetchOrgStatus();
-        const subscriptionList = await this.fetchSubscriptionList();
+        const isAvailable = await this.checkOrgStatus();
 
-        return {
-            orgStatus,
-            subscriptionList,
-        };
+        return isAvailable;
     }
 
     // Method to create and display the iframe for the test
@@ -135,6 +182,7 @@ class ISelfieTestInstance {
         this.iframe.allow = 'camera; microphone'; // Allow camera and microphone access
 
         // Set the iframe source URL
+        
         this.iframe.src = `${this.config.frontend_url}/sdk/before-cardio-test?isSDK=true`;
         container.appendChild(this.iframe); // Append iframe to the container
 
@@ -172,7 +220,9 @@ class ISelfieTestInstance {
                     "--button-primary-background": this.styles.buttonColor,
                     "--border-focused": this.styles.buttonColor,
                     "--button-primary-text": this.styles.buttonTextColor,
+                    "--icon-default-background": this.styles.iconColor,
                     "--icon-primary-background": this.styles.iconColor,
+                    "--font-face": this.styles.fontFace
                 }
             }
         };
@@ -212,9 +262,15 @@ class ISelfieTestInstance {
 
     // Method to start the test
     startTest() {
-        return new Promise((resolve, reject) => {
+        return new Promise(async (resolve, reject) => {
             this.resolveTest = resolve; // Set resolve handler
             this.rejectTest = reject; // Set reject handler
+
+            const isAvailable = await this.checkOrgStatus();
+
+            if(!isAvailable) {
+                reject(new Error('You have reached the maximum limit of cardio test usage policy. Please reach out to administrator.'));
+            }
     
             // Try creating the iframe with retries
             const tryCreateIframe = (retryCount = 0) => {
@@ -264,52 +320,19 @@ export default async function ISelfieTest(options) {
 
     try {
         // Verify API key and fetch additional data
-        const { orgStatus, subscriptionList } = await instance.initialize();
+        const isAvailable = await instance.initialize();
 
-        let cardioEnabled = false;
-
-        const accountType = orgStatus?.accountType;
-
-        const totalCardioTestCount = orgStatus?.totalCardioTestCount || 0;
-
-        if (accountType === 'free') {
-            cardioEnabled = true;
-        }
-        if (accountType === 'trial') {
-            
-            const cardioTrialTestLimit = instance.organization?.cardioTrialTestLimit || 0;
-            const remainingCardioTests = cardioTrialTestLimit - totalCardioTestCount;
-            if (remainingCardioTests > 0) {
-                cardioEnabled = true;
-            }
-        }
-        if (accountType === 'active') {
-            const { cardio } = orgStatus?.testLimitByCurrentSubscription;
-            const cardioCount = cardio.testLimit
-                ? cardio.testLimit.interval_count * cardio.testLimit.unit
-                : 0;
-            const remainingCardioTests = cardioCount - totalCardioTestCount;
-
-            if (remainingCardioTests > 0) {
-                cardioEnabled = true;
-            }
-        }
-
-        if(cardioEnabled) {
+        if(isAvailable) {
             return {
                 success: true,
                 message: "SDK initialized successfully.",
-                orgStatus,
-                subscriptionList,
                 startCardioTest: () => instance.startTest(),
                 closeTest: () => instance.closeTest(),
             };
         } else {
             return {
                 success: false,
-                message: "You have reached the maximum limit of cardio test usage policy. Please reach out to administrator.",
-                orgStatus,
-                subscriptionList,
+                message: "You have reached the maximum limit of cardio test usage policy. Please reach out to administrator."
             };
         }
     } catch (error) {
