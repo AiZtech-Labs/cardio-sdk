@@ -117,21 +117,19 @@ class ISelfieTestInstance {
         const orgStatus = await this.fetchOrgStatus();
         const subscriptionList = await this.fetchSubscriptionList();
 
-        let cardioEnabled = false;
-
         const accountType = orgStatus?.accountType;
 
         const totalCardioTestCount = orgStatus?.totalCardioTestCount || 0;
 
         if (accountType === 'free') {
-            cardioEnabled = true;
+            return true;
         }
         if (accountType === 'trial') {
             
             const cardioTrialTestLimit = instance.organization?.cardioTrialTestLimit || 0;
             const remainingCardioTests = cardioTrialTestLimit - totalCardioTestCount;
             if (remainingCardioTests > 0) {
-                cardioEnabled = true;
+                return true;
             }
         }
         if (accountType === 'active') {
@@ -141,16 +139,16 @@ class ISelfieTestInstance {
                 : 0;
             const remainingCardioTests = cardioCount - totalCardioTestCount;
 
-            if (remainingCardioTests > 0) {
-                cardioEnabled = true;
+            const activeSubscriptions = subscriptionList.filter(
+                (sub) => sub?.productType === "cardio" && sub?.stripe?.status === "active"
+            );
+
+            if (remainingCardioTests > 0 && activeSubscriptions.length > 0) {
+                return true;
             }
         }
 
-        const activeSubscriptions = subscriptionList.filter(
-            (sub) => sub?.productType === "cardio" && sub?.stripe?.status === "active"
-        );
-
-        return cardioEnabled && activeSubscriptions.length > 0 ? true : false;
+        return false;
     }
 
     // Wrapper method to verify API key and call additional APIs
@@ -351,7 +349,6 @@ export const closeTest = () => instance?.closeTest();
 // Global UMD export for browser compatibility
 if (typeof window !== 'undefined') {
     window.ISelfieCardioSDK = ISelfieTest;
-    window.ISelfieTest = ISelfieTest;
     window.startCardioTest = startCardioTest;
     window.closeTest = closeTest;
 }
