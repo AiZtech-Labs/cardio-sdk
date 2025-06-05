@@ -34,6 +34,7 @@ class ISelfieTestInstance {
                 hidden: false, // Display an instruction page before the test starts
                 instructionContent: null, // Custom instruction page content
             },
+            progressBarPosition: _config?.options?.progressBarPosition ?? 'bottom', // Position of the progress bar
         };
 
         // Styling options
