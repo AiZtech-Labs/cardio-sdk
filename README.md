@@ -43,7 +43,8 @@ const sdk = await ISelfieTestSDK({
     instructionPage: {
       hidden: false,
       instructionContent: null
-    }
+    },
+    progressBarPosition: 'bottom'
   },
   styles: {
     pageBackgroundColor: 'linear-gradient(180deg, #210D2F, #050110)',
