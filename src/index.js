@@ -35,6 +35,7 @@ class ISelfieTestInstance {
                 instructionContent: null, // Custom instruction page content
             },
             progressBarPosition: _config?.options?.progressBarPosition ?? 'bottom', // Position of the progress bar
+            showLanguageSelector: _config?.options?.showLanguageSelector ?? true, // Show language selector
         };
 
         // Styling options
