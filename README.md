@@ -40,6 +40,8 @@ const sdk = await ISelfieTestSDK({
     disableDistanceCheck: false,
     terminateTestIfConditionPersisted: false,
     testTerminationTimeOut: 7,
+    progressBarPosition: "top",
+    showLanguageSelector: true,
     instructionPage: {
       hidden: false,
       instructionContent: null
@@ -85,6 +87,8 @@ In case of using direct script tag for HTML, use the code below.
         disableDistanceCheck: false,
         terminateTestIfConditionPersisted: false,
         testTerminationTimeOut: 7,
+        progressBarPosition: "top",
+        showLanguageSelector: true,
         instructionPage: {
           hidden: false,
           instructionContent: null
@@ -187,6 +191,14 @@ If set to `true`, the test will automatically terminate if a persistent failure 
 **`testTerminationTimeOut`**: (number)  
 The duration (in seconds) to wait before terminating the test after detecting a persistent failure condition.  
 **Default**: `7`  
+
+**`progressBarPosition`**: (`"top" | "bottom"`)  
+This option will show the progress bar either on top or bottom of the video/camera feedback.
+**Default**: `bottom`  
+
+**`showLanguageSelector`**: (boolean)  
+This option will show or hide the language selector.
+**Default**: `true`  
 
 **`instructionPage`**: (object)  
 Customization options for the instruction page displayed before the test starts:
