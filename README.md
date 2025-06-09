@@ -193,7 +193,7 @@ The duration (in seconds) to wait before terminating the test after detecting a 
 **Default**: `7`  
 
 **`progressBarPosition`**: (`"top" | "bottom"`)  
-This option will show the progress bar either on top or bottom of the video/camera feedback.
+This option will show the progress bar either on top or bottom of the video/camera feed.
 **Default**: `bottom`  
 
 **`showLanguageSelector`**: (boolean)  
