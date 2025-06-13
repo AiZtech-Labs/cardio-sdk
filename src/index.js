@@ -1,4 +1,26 @@
 import { dev, prod } from "./config";
+import _ from 'lodash';
+import { isAfter } from 'date-fns';
+
+// Error code enum map
+export const ERROR_CODES = {
+    AIZERR001: {
+        code: 'AIZERR001',
+        note: 'Trial expired'
+    },
+    AIZERR002: {
+        code: 'AIZERR002',
+        note: 'Trial usage limit exceeded'
+    },
+    AIZERR003: {
+        code: 'AIZERR003',
+        note: 'Active subscription usage limit succeeded'
+    },
+    AIZERR004: {
+        code: 'AIZERR004',
+        note: 'No active subscription'
+    },
+};
 
 // Class representing the iSelfieTest instance
 class ISelfieTestInstance {
@@ -10,6 +32,7 @@ class ISelfieTestInstance {
         this.domain = window.location.origin; // Get the current domain
         this.organization = null;
         this.success = false;
+        this.isAvailable = { value : false, message : 'Not initialized' }; // Add isAvailable property
 
         // Basic configuration
         this.config = _config?.environment === "dev" ? dev : prod; // environment
@@ -27,7 +50,7 @@ class ISelfieTestInstance {
             isDarkMode: _config?.options?.isDarkMode ?? true, // Enable dark mode for the test UI by default
             disableMotionDetection: _config?.options?.disableMotionDetection ?? false, // Disable motion detection during the test (if false, motion detection is enabled)
             disableLightCheck: _config?.options?.disableLightCheck ?? false, // Disable light level check during the test (if false, light level will be checked)
-            disableDistanceCheck: _config?.options?.disableDistanceCheck ?? false, // Disable distance check during the test (if false, user’s distance from the camera will be checked)
+            disableDistanceCheck: _config?.options?.disableDistanceCheck ?? false, // Disable distance check during the test (if false, user's distance from the camera will be checked)
             terminateTestIfConditionPersisted: _config?.options?.terminateTestIfConditionPersisted ?? false, // Terminate the test if certain failure conditions persist during the test
             testTerminationTimeOut: _config?.options?.testTerminationTimeOut ?? 7, // Timeout in seconds before terminating the test if a persistent condition is detected
             instructionPage: _config?.options?.instructionPage ?? {
@@ -120,18 +143,33 @@ class ISelfieTestInstance {
         const subscriptionList = await this.fetchSubscriptionList();
 
         const accountType = orgStatus?.accountType;
-
         const totalCardioTestCount = orgStatus?.totalCardioTestCount || 0;
 
         if (accountType === 'free') {
-            return true;
+            return { value: true, message: 'Free account' };
         }
+
+        if (accountType === 'trial_expired') {
+            return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
+        }
+
         if (accountType === 'trial') {
-            
-            const cardioTrialTestLimit = instance.organization?.cardioTrialTestLimit || 0;
+            // Check if trial has expired
+            const trialEnd = new Date(this.organization?.trialEnd);
+            const now = new Date();
+
+            // Check if trialEnd is valid and compare dates
+            if (isAfter(now, trialEnd)) {
+                return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
+            }
+
+            // Check if trial usage limit has been exceeded
+            const cardioTrialTestLimit = this.organization?.cardioTrialTestLimit || 0;
             const remainingCardioTests = cardioTrialTestLimit - totalCardioTestCount;
             if (remainingCardioTests > 0) {
-                return true;
+                return { value: true, message: 'Active trial account' };
+            } else {
+                return { value: false, message: 'Trial usage limit exceeded', code: ERROR_CODES.AIZERR002.code };
             }
         }
         if (accountType === 'active') {
@@ -146,11 +184,13 @@ class ISelfieTestInstance {
             );
 
             if (remainingCardioTests > 0 && activeSubscriptions.length > 0) {
-                return true;
+                return { value: true, message: 'Active subscription' };
+            } else {
+                return { value: false, message: 'Active subscription usage limit exceeded', code: ERROR_CODES.AIZERR003.code };
             }
         }
 
-        return false;
+        return { value: false, message: 'No active subscription', code: ERROR_CODES.AIZERR004.code };
     }
 
     // Wrapper method to verify API key and call additional APIs
@@ -160,9 +200,9 @@ class ISelfieTestInstance {
             throw new Error(`Verification failed: ${result.message}`);
         }
 
-        const isAvailable = await this.checkOrgStatus();
+        this.isAvailable = await this.checkOrgStatus();
 
-        return isAvailable;
+        return this.isAvailable;
     }
 
     // Method to create and display the iframe for the test
@@ -304,6 +344,11 @@ class ISelfieTestInstance {
             console.log("No iframe to close.");
         }
     }
+
+    // Add method to check availability
+    getAvailability() {
+        return this.isAvailable;
+    }
 }
 
 // Global instance of the SDK
@@ -313,7 +358,13 @@ let instance;
 export default async function ISelfieTest(options) {
     if (instance) {
         console.warn("SDK is already initialized. Returning the existing instance.");
-        return;
+        return {
+            success: true,
+            message: "SDK is already initialized.",
+            startCardioTest: () => instance.startTest(),
+            closeTest: () => instance.closeTest(),
+            isAvailable: instance.getAvailability(),
+        };
     }
 
     instance = new ISelfieTestInstance(options);
@@ -328,11 +379,14 @@ export default async function ISelfieTest(options) {
                 message: "SDK initialized successfully.",
                 startCardioTest: () => instance.startTest(),
                 closeTest: () => instance.closeTest(),
+                isAvailable: instance.getAvailability(),
             };
         } else {
+            const availability = instance.getAvailability();
             return {
                 success: false,
-                message: "You have reached the maximum limit of cardio test usage policy. Please reach out to administrator."
+                message: availability?.message,
+                isAvailable: availability,
             };
         }
     } catch (error) {
@@ -340,6 +394,7 @@ export default async function ISelfieTest(options) {
         return {
             success: false,
             message: error.message,
+            isAvailable: false,
         };
     }
 }
@@ -347,10 +402,12 @@ export default async function ISelfieTest(options) {
 // Export test control functions
 export const startCardioTest = () => instance?.startTest();
 export const closeTest = () => instance?.closeTest();
+export const getAvailability = () => instance?.getAvailability();
 
 // Global UMD export for browser compatibility
 if (typeof window !== 'undefined') {
     window.ISelfieCardioSDK = ISelfieTest;
     window.startCardioTest = startCardioTest;
     window.closeTest = closeTest;
+    window.getAvailability = getAvailability;
 }
