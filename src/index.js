@@ -78,7 +78,7 @@ class ISelfieTestInstance {
     // Method to verify API key with the backend
     async verifyApiKey() {
         try {
-            const response = await fetch(`${this.config.backend_url}/sdk/verify`, {
+            const response = await fetch(`${this.config.backend_url}/sdk/central/verify`, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
@@ -99,7 +99,7 @@ class ISelfieTestInstance {
     // Fetch organization status
     async fetchOrgStatus() {
         try {
-            const response = await fetch(`${this.config.backend_url}/sdk/orgStatus`, {
+            const response = await fetch(`${this.config.backend_url}/sdk/central/orgStatus`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -122,7 +122,7 @@ class ISelfieTestInstance {
             throw new Error('Organization ID not available.');
         }
         try {
-            const response = await fetch(`${this.config.backend_url}/subscription/sdk/${this.organization._id}/list`, {
+            const response = await fetch(`${this.config.backend_url}/subscription/central/sdk/${this.organization._id}/list`, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
