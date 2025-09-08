@@ -20,22 +20,10 @@ export const ERROR_CODES = {
         code: 'AIZERR004',
         note: 'No active subscription'
     },
-    AIZERR005: {
-        code: 'AIZERR005',
-        note: 'Invalid API key'
-    },
     AIZERR006: {
-        code: 'AIZERR006',
-        note: 'Domain not allowed'
-    },
-    AIZERR007: {
-        code: 'AIZERR007',
-        note: 'Invalid organization ID'
-    },
-    AIZERR008: {
-        code: 'AIZERR008',
-        note: 'Organization not found'
-    },
+        code: 'AIZERR005',
+        note: 'Domain not allowed or Invalid API key'
+    }
 };
 
 // Class representing the iSelfieTest instance
@@ -226,7 +214,17 @@ class ISelfieTestInstance {
     async initialize() {
         const result = await this.verifyApiKey();
         if (!result.success) {
-            throw new Error(`Verification failed: ${result.message}`);
+            if (result.message === 'Verification failed across all regions. Invalid public key or domain.') {
+                const availability = {
+                    value: false,
+                    message: ERROR_CODES.AIZERR006.note,
+                    code: ERROR_CODES.AIZERR006.code
+                };
+                this.isAvailable = availability;
+                return this.isAvailable;
+            } else {
+                throw new Error(`Verification failed: ${result.message}`);
+            }
         }
 
         this.isAvailable = await this.checkOrgStatus();
