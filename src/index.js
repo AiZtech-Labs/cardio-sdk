@@ -20,6 +20,10 @@ export const ERROR_CODES = {
         code: 'AIZERR004',
         note: 'No active subscription'
     },
+    AIZERR006: {
+        code: 'AIZERR005',
+        note: 'Domain not allowed or Invalid API key'
+    }
 };
 
 // Class representing the iSelfieTest instance
@@ -145,11 +149,16 @@ class ISelfieTestInstance {
         const accountType = orgStatus?.accountType;
         const totalCardioTestCount = orgStatus?.totalCardioTestCount || 0;
 
+        const activeSubscriptions = subscriptionList.filter(
+            (sub) => sub?.productType === "cardio" && sub?.stripe?.status === "active"
+        );
+
         if (accountType === 'free') {
             return { value: true, message: 'Free account' };
         }
 
         if (accountType === 'trial_expired') {
+            console.error(ERROR_CODES.AIZERR001.note);
             return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
         }
 
@@ -160,6 +169,7 @@ class ISelfieTestInstance {
 
             // Check if trialEnd is valid and compare dates
             if (isAfter(now, trialEnd)) {
+                console.error(ERROR_CODES.AIZERR001.note);
                 return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
             }
 
@@ -169,6 +179,7 @@ class ISelfieTestInstance {
             if (remainingCardioTests > 0) {
                 return { value: true, message: 'Active trial account' };
             } else {
+                console.error(ERROR_CODES.AIZERR002.note);
                 return { value: false, message: 'Trial usage limit exceeded', code: ERROR_CODES.AIZERR002.code };
             }
         }
@@ -186,8 +197,14 @@ class ISelfieTestInstance {
             if (remainingCardioTests > 0 && activeSubscriptions.length > 0) {
                 return { value: true, message: 'Active subscription' };
             } else {
+                console.error(ERROR_CODES.AIZERR003.note);
                 return { value: false, message: 'Active subscription usage limit exceeded', code: ERROR_CODES.AIZERR003.code };
             }
+        }
+
+        if (accountType === 'active' && activeSubscriptions.length === 0) {
+            console.error(ERROR_CODES.AIZERR004.note);
+            return { value: false, message: 'No active subscription', code: ERROR_CODES.AIZERR004.code };
         }
 
         return { value: false, message: 'No active subscription', code: ERROR_CODES.AIZERR004.code };
@@ -197,7 +214,17 @@ class ISelfieTestInstance {
     async initialize() {
         const result = await this.verifyApiKey();
         if (!result.success) {
-            throw new Error(`Verification failed: ${result.message}`);
+            if (result.message === 'Verification failed across all regions. Invalid public key or domain.') {
+                const availability = {
+                    value: false,
+                    message: ERROR_CODES.AIZERR006.note,
+                    code: ERROR_CODES.AIZERR006.code
+                };
+                this.isAvailable = availability;
+                return this.isAvailable;
+            } else {
+                throw new Error(`Verification failed: ${result.message}`);
+            }
         }
 
         this.isAvailable = await this.checkOrgStatus();
