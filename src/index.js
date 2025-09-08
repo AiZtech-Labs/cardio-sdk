@@ -20,6 +20,22 @@ export const ERROR_CODES = {
         code: 'AIZERR004',
         note: 'No active subscription'
     },
+    AIZERR005: {
+        code: 'AIZERR005',
+        note: 'Invalid API key'
+    },
+    AIZERR006: {
+        code: 'AIZERR006',
+        note: 'Domain not allowed'
+    },
+    AIZERR007: {
+        code: 'AIZERR007',
+        note: 'Invalid organization ID'
+    },
+    AIZERR008: {
+        code: 'AIZERR008',
+        note: 'Organization not found'
+    },
 };
 
 // Class representing the iSelfieTest instance
@@ -145,11 +161,16 @@ class ISelfieTestInstance {
         const accountType = orgStatus?.accountType;
         const totalCardioTestCount = orgStatus?.totalCardioTestCount || 0;
 
+        const activeSubscriptions = subscriptionList.filter(
+            (sub) => sub?.productType === "cardio" && sub?.stripe?.status === "active"
+        );
+
         if (accountType === 'free') {
             return { value: true, message: 'Free account' };
         }
 
         if (accountType === 'trial_expired') {
+            console.error(ERROR_CODES.AIZERR001.note);
             return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
         }
 
@@ -160,6 +181,7 @@ class ISelfieTestInstance {
 
             // Check if trialEnd is valid and compare dates
             if (isAfter(now, trialEnd)) {
+                console.error(ERROR_CODES.AIZERR001.note);
                 return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
             }
 
@@ -169,6 +191,7 @@ class ISelfieTestInstance {
             if (remainingCardioTests > 0) {
                 return { value: true, message: 'Active trial account' };
             } else {
+                console.error(ERROR_CODES.AIZERR002.note);
                 return { value: false, message: 'Trial usage limit exceeded', code: ERROR_CODES.AIZERR002.code };
             }
         }
@@ -186,8 +209,14 @@ class ISelfieTestInstance {
             if (remainingCardioTests > 0 && activeSubscriptions.length > 0) {
                 return { value: true, message: 'Active subscription' };
             } else {
+                console.error(ERROR_CODES.AIZERR003.note);
                 return { value: false, message: 'Active subscription usage limit exceeded', code: ERROR_CODES.AIZERR003.code };
             }
+        }
+
+        if (accountType === 'active' && activeSubscriptions.length === 0) {
+            console.error(ERROR_CODES.AIZERR004.note);
+            return { value: false, message: 'No active subscription', code: ERROR_CODES.AIZERR004.code };
         }
 
         return { value: false, message: 'No active subscription', code: ERROR_CODES.AIZERR004.code };
