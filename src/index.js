@@ -42,7 +42,9 @@ class ISelfieTestInstance {
         this.config = _config?.environment === "dev" ? dev : prod; // environment
         this.apiKey = _config?.apiKey || ''; // API key for validation
         this.appUserId = _config?.appUserId || ''; // App user ID
+        this.organizationId = _config?.organizationId || ''; // Organization ID
         this.containerId = _config?.containerId || 'iselfietest'; // ID of the container for the iframe
+        this.verificationMethod = _config?.verificationMethod || 'apikey'; // Verification method: 'apikey' or 'accesstoken'
 
         // Options for customizing the test
         this.options = {
@@ -82,14 +84,32 @@ class ISelfieTestInstance {
     // Method to verify API key with the backend
     async verifyApiKey() {
         try {
-            const response = await fetch(`${this.config.backend_url}/sdk/central/verify`, {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Api-Key': this.apiKey, // Pass the API key in the request headers
-                },
-            });
-            const result = await response.json();
+            let response, result;
+            
+            if (this.verificationMethod === 'accesstoken') {
+                // Access token verification method
+                response = await fetch(`${this.config.backend_url}/sdk/central/access-token/verify`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        access_token: this.apiKey,
+                        organizationId: this.organizationId // Using appUserId as organizationId
+                    })
+                });
+            } else {
+                // Default API key verification method (backward compatibility)
+                response = await fetch(`${this.config.backend_url}/sdk/central/verify`, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Api-Key': this.apiKey, // Pass the API key in the request headers
+                    },
+                });
+            }
+            
+            result = await response.json();
             this.success = result.success;
             this.organization = result.organization || null;
             return result;
@@ -249,12 +269,13 @@ class ISelfieTestInstance {
         this.iframe.allow = 'camera; microphone'; // Allow camera and microphone access
 
         // Set the iframe source URL
-        
+        console.log("this.config.frontend_url::", this.config.frontend_url);
         this.iframe.src = `${this.config.frontend_url}/sdk/before-cardio-test?isSDK=true`;
         container.appendChild(this.iframe); // Append iframe to the container
 
         this.iframe.onload = () => {
             console.log("Iframe loaded, sending initial message to parent");
+            console.log("this.config.frontend_url::", this.config.frontend_url);
             this.sendMessageToIframe(); // Send initial message when iframe is loaded
         };
 
