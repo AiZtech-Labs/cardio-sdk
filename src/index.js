@@ -95,7 +95,7 @@ class ISelfieTestInstance {
                     },
                     body: JSON.stringify({
                         access_token: this.apiKey,
-                        organizationId: this.organizationId // Using appUserId as organizationId
+                        organizationId: this.organizationId
                     })
                 });
             } else {
