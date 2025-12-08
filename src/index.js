@@ -44,7 +44,7 @@ class ISelfieTestInstance {
         this.appUserId = _config?.appUserId || ''; // App user ID
         this.organizationId = _config?.organizationId || ''; // Organization ID
         this.containerId = _config?.containerId || 'iselfietest'; // ID of the container for the iframe
-        this.verificationMethod = _config?.verificationMethod || 'apikey'; // Verification method: 'apikey' or 'accesstoken'
+        this.verificationMethod = _config?.verificationMethod || 'apikey'; // Verification method: 'apikey' or 'accessToken'
 
         // Options for customizing the test
         this.options = {
@@ -86,7 +86,7 @@ class ISelfieTestInstance {
         try {
             let response, result;
             
-            if (this.verificationMethod === 'accesstoken') {
+            if (this.verificationMethod === 'accessToken') {
                 // Access token verification method
                 response = await fetch(`${this.config.backend_url}/sdk/central/access-token/verify`, {
                     method: 'POST',
