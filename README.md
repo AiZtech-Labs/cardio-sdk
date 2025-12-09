@@ -27,9 +27,9 @@ import iSelfieCardioSDK from '@aiztechlabs/cardio-sdk';
 
 // Using API Key verification method (default)
 const sdk = await ISelfieTestSDK({
-  apiKey: "your-api-key",
+  apiKey: "your-api-key", // When verificationMethod is 'apikey', this should be your API key
   appUserId: "user-id",
-  verificationMethod: "apikey", // Optional: 'apikey' (default) or 'accessToken'
+  verificationMethod: "apikey", // Optional: 'apikey' (default) or 'accesstoken' (case insensitive)
   options: {
     displayResults: false,
     enablePDFSharing: false,
@@ -64,10 +64,10 @@ const sdk = await ISelfieTestSDK({
 
 // Using Access Token verification method
 const sdkWithToken = await ISelfieTestSDK({
-  apiKey: "your-access-token",
+  apiKey: "your-access-token", // When verificationMethod is 'accesstoken', this should be your access token
   appUserId: "user-id",
-  organizationId: "your-organization-id", // Required when using accessToken verification
-  verificationMethod: "accessToken",
+  organizationId: "your-organization-id", // Required when using accesstoken verification
+  verificationMethod: "accesstoken", // Case insensitive: 'accesstoken', 'accessToken', 'AccessToken', etc.
   options: {
     // ... same options as above
   },
@@ -90,9 +90,9 @@ In case of using direct script tag for HTML, use the code below.
   (async function() {
     // Using API Key verification method (default)
     var sdk = await ISelfieTestSDK({
-      apiKey: "your-api-key",
+      apiKey: "your-api-key", // When verificationMethod is 'apikey', this should be your API key
       appUserId: "user-id",
-      verificationMethod: "apikey", // Optional: 'apikey' (default) or 'accessToken'
+      verificationMethod: "apikey", // Optional: 'apikey' (default) or 'accesstoken' (case insensitive)
       options: {
         displayResults: false,
         enablePDFSharing: false,
@@ -155,7 +155,9 @@ In case of using direct script tag for HTML, use the code below.
 ## Initialization Parameters
 
 **`apiKey`**: (string)  
-Your application's API key or access token for authenticating with the SDK. The value depends on the `verificationMethod` used.  
+Your authentication credential for the SDK. The value depends on the `verificationMethod` used:
+- When `verificationMethod` is `"apikey"` (default): This should be your **API key**
+- When `verificationMethod` is `"accesstoken"`: This should be your **access token**  
 **Example**: `"your-api-key"` or `"your-access-token"`  
 
 **`appUserId`**: (string)  
@@ -163,13 +165,14 @@ A unique identifier for the user running the cardio test. This value is optional
 **Example**: `"1"`  
 
 **`organizationId`**: (string, optional)  
-The organization ID associated with your account. This parameter is **required** when using `verificationMethod: "accessToken"`. It is not needed when using the default API key verification method.  
+The organization ID associated with your account. This parameter is **required** when using `verificationMethod: "accesstoken"`. It is not needed when using the default API key verification method.  
 **Example**: `"673f477ac141e45a54e76b7a"`  
 
-**`verificationMethod`**: (`"apikey"` | `"accessToken"`)  
+**`verificationMethod`**: (`"apikey"` | `"accesstoken"`) - Case insensitive  
 Specifies the authentication method to use for SDK verification.  
 - **`"apikey"`** (default): Uses API key authentication via HTTP header. This is the default method and maintains backward compatibility.  
-- **`"accessToken"`**: Uses access token authentication via POST request body. When using this method, you must also provide the `organizationId` parameter.  
+- **`"accesstoken"`**: Uses access token authentication via POST request body. When using this method, you must also provide the `organizationId` parameter.  
+**Note**: This parameter is case insensitive, so `"accesstoken"`, `"accessToken"`, `"AccessToken"`, etc. are all valid.  
 **Default**: `"apikey"`  
 **Example**: `"apikey"` or `"accessToken"`  
 
