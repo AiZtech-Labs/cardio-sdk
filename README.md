@@ -25,9 +25,11 @@ In case of using NPM, use the following code snippet to initialize the SDK.
 ```javascript
 import iSelfieCardioSDK from '@aiztechlabs/cardio-sdk';
 
+// Using API Key verification method (default)
 const sdk = await ISelfieTestSDK({
   apiKey: "your-api-key",
   appUserId: "user-id",
+  verificationMethod: "apikey", // Optional: 'apikey' (default) or 'accessToken'
   options: {
     displayResults: false,
     enablePDFSharing: false,
@@ -60,6 +62,20 @@ const sdk = await ISelfieTestSDK({
   }
 });
 
+// Using Access Token verification method
+const sdkWithToken = await ISelfieTestSDK({
+  apiKey: "your-access-token",
+  appUserId: "user-id",
+  organizationId: "your-organization-id", // Required when using accessToken verification
+  verificationMethod: "accessToken",
+  options: {
+    // ... same options as above
+  },
+  styles: {
+    // ... same styles as above
+  }
+});
+
 if (sdk.success) {
   // sdk.startCardioTest();
 } else {
@@ -72,9 +88,11 @@ In case of using direct script tag for HTML, use the code below.
 ```html
 <script>
   (async function() {
+    // Using API Key verification method (default)
     var sdk = await ISelfieTestSDK({
       apiKey: "your-api-key",
       appUserId: "user-id",
+      verificationMethod: "apikey", // Optional: 'apikey' (default) or 'accessToken'
       options: {
         displayResults: false,
         enablePDFSharing: false,
@@ -137,12 +155,23 @@ In case of using direct script tag for HTML, use the code below.
 ## Initialization Parameters
 
 **`apiKey`**: (string)  
-Your application's API key for authenticating with the SDK.  
-**Example**: `"your-api-key"`  
+Your application's API key or access token for authenticating with the SDK. The value depends on the `verificationMethod` used.  
+**Example**: `"your-api-key"` or `"your-access-token"`  
 
 **`appUserId`**: (string)  
 A unique identifier for the user running the cardio test. This value is optional and will be returned as part of the response together with the vital measurements if a webhook is configured.  
 **Example**: `"1"`  
+
+**`organizationId`**: (string, optional)  
+The organization ID associated with your account. This parameter is **required** when using `verificationMethod: "accessToken"`. It is not needed when using the default API key verification method.  
+**Example**: `"673f477ac141e45a54e76b7a"`  
+
+**`verificationMethod`**: (`"apikey"` | `"accessToken"`)  
+Specifies the authentication method to use for SDK verification.  
+- **`"apikey"`** (default): Uses API key authentication via HTTP header. This is the default method and maintains backward compatibility.  
+- **`"accessToken"`**: Uses access token authentication via POST request body. When using this method, you must also provide the `organizationId` parameter.  
+**Default**: `"apikey"`  
+**Example**: `"apikey"` or `"accessToken"`  
 
 ## Options
 
