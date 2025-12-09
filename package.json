@@ -1,6 +1,6 @@
 {
   "name": "@aiztechlabs/cardio-sdk",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "A JavaScript SDK for integrating Cardio test.",
   "main": "dist/iselfie-cardio-sdk.umd.min.js",
   "module": "dist/iselfie-cardio-sdk.esm.js",
