@@ -23,6 +23,18 @@ export const ERROR_CODES = {
     AIZERR006: {
         code: 'AIZERR005',
         note: 'Domain not allowed or Invalid API key'
+    },
+    AIZERR007: {
+        code: 'AIZERR007',
+        note: 'Invalid organization ID'
+    },
+    AIZERR008: {
+        code: 'AIZERR008',
+        note: 'Invalid access token'
+    },
+    AIZERR009: {
+        code: 'AIZERR009',
+        note: 'Invalid API key'
     }
 };
 
@@ -44,7 +56,7 @@ class ISelfieTestInstance {
         this.appUserId = _config?.appUserId || ''; // App user ID
         this.organizationId = _config?.organizationId || ''; // Organization ID
         this.containerId = _config?.containerId || 'iselfietest'; // ID of the container for the iframe
-        this.verificationMethod = _config?.verificationMethod || 'apikey'; // Verification method: 'apikey' or 'accessToken'
+        this.verificationMethod = _config?.verificationMethod || 'apikey'; // Verification method: 'apikey' or 'accesstoken' (case insensitive)
 
         // Options for customizing the test
         this.options = {
@@ -86,7 +98,7 @@ class ISelfieTestInstance {
         try {
             let response, result;
             
-            if (this.verificationMethod === 'accessToken') {
+            if (this.verificationMethod?.toLowerCase() === 'accesstoken') {
                 // Access token verification method
                 response = await fetch(`${this.config.backend_url}/sdk/central/access-token/verify`, {
                     method: 'POST',
@@ -112,11 +124,30 @@ class ISelfieTestInstance {
             result = await response.json();
             this.success = result.success;
             this.organization = result.organization || null;
+            
+            // Handle specific error cases for different verification methods
+            if (!result.success) {
+                if (this.verificationMethod?.toLowerCase() === 'accesstoken') {
+                    // Any failure from access token endpoint is AIZERR008
+                    result.errorCode = ERROR_CODES.AIZERR008.code;
+                    result.errorMessage = ERROR_CODES.AIZERR008.note;
+                } else {
+                    // Any failure from API key endpoint is AIZERR009
+                    result.errorCode = ERROR_CODES.AIZERR009.code;
+                    result.errorMessage = ERROR_CODES.AIZERR009.note;
+                }
+            }
+            
             return result;
         } catch (error) {
             console.error('API call failed:', error.message ?? error);
             this.success = false;
-            return false;
+            return { 
+                success: false, 
+                message: error.message ?? 'Network error occurred',
+                errorCode: this.verificationMethod?.toLowerCase() === 'accesstoken' ? ERROR_CODES.AIZERR008.code : ERROR_CODES.AIZERR009.code,
+                errorMessage: this.verificationMethod?.toLowerCase() === 'accesstoken' ? ERROR_CODES.AIZERR008.note : ERROR_CODES.AIZERR009.note
+            };
         }
     }
 
@@ -234,7 +265,16 @@ class ISelfieTestInstance {
     async initialize() {
         const result = await this.verifyApiKey();
         if (!result.success) {
-            if (result.message === 'Verification failed across all regions. Invalid public key or domain.') {
+            // Handle specific error codes
+            if (result.errorCode) {
+                const availability = {
+                    value: false,
+                    message: result.errorMessage,
+                    code: result.errorCode
+                };
+                this.isAvailable = availability;
+                return this.isAvailable;
+            } else if (result.message === 'Verification failed across all regions. Invalid public key or domain.') {
                 const availability = {
                     value: false,
                     message: ERROR_CODES.AIZERR006.note,
