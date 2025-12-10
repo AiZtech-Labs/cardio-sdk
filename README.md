@@ -18,6 +18,143 @@ Add the SDK to your project using npm or include it via a `<script>` tag for dir
     <script src="https://cdn.jsdelivr.net/npm/@aiztechlabs/cardio-sdk/dist/iselfie-cardio-sdk.umd.min.js"></script>
     ```
 
+## Authentication & API Keys
+
+The iSelfie™ Cardio SDK supports two authentication methods: **API Key** and **Access Token**. The method you choose depends on your security requirements and use case.
+
+### API Key Authentication
+
+API Key authentication is the default and simplest method. It uses a static API key that remains valid until revoked.
+
+#### How to Get Your API Key
+
+1. Log in to the [Developer Console](https://developer.iselfietest.com)
+2. Navigate to **Settings**
+3. Go to the **Your API Key** section
+4. Copy your API key
+
+Your API key will be used directly in the SDK initialization when `verificationMethod` is set to `"apikey"` (or omitted, as it's the default).
+
+### Access Token Authentication
+
+Access Token authentication provides enhanced security by using temporary, time-limited tokens. This method is recommended for production environments where security is a priority.
+
+#### Why Use Access Tokens?
+
+Access tokens offer several security advantages:
+
+- **Temporary Validity**: Tokens expire after 5 minutes, reducing the risk of unauthorized access if compromised
+- **Dynamic Generation**: Tokens are generated on-demand, eliminating the need to store long-lived credentials in client-side code
+- **Enhanced Security**: Even if a token is intercepted, it becomes invalid after a short period
+
+#### How to Get an Access Token
+
+To obtain an access token, you need to make a POST request to the access token endpoint with your organization ID and API key.
+
+**Production Environment:**
+```
+https://consumer-api.iselfietest.com/sdk/central/access-token
+```
+
+**Development Environment:**
+```
+https://dev-api.iselfietest.com/sdk/central/access-token
+```
+
+#### Request Format
+
+**Method**: `POST`  
+**Content-Type**: `application/json`
+
+**Request Body:**
+```json
+{
+  "organizationId": "your-organization-id",
+  "apikey": "your-api-key"
+}
+```
+
+#### Response Format
+
+Upon successful authentication, the API returns a JSON response containing the access token:
+
+```json
+{
+  "success": true,
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "region": "Global"
+}
+```
+
+**Response Fields:**
+
+- **`success`**: (boolean)  
+  Indicates whether the token generation was successful.
+
+- **`access_token`**: (string)  
+  A JWT (JSON Web Token) that serves as your temporary access credential. This token is valid for **5 minutes** from the time of generation.
+
+- **`region`**: (string)  
+  The region associated with your organization (e.g., `"Global"`).
+
+#### Example: Fetching an Access Token
+
+Here's an example of how to fetch an access token using JavaScript:
+
+```javascript
+async function getAccessToken(organizationId, apiKey, isProduction = true) {
+  const baseUrl = isProduction 
+    ? 'https://consumer-api.iselfietest.com/sdk/central/access-token'
+    : 'https://dev-api.iselfietest.com/sdk/central/access-token';
+  
+  try {
+    const response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        organizationId: organizationId,
+        apikey: apiKey
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      return data.access_token;
+    } else {
+      throw new Error('Failed to obtain access token');
+    }
+  } catch (error) {
+    console.error('Error fetching access token:', error);
+    throw error;
+  }
+}
+
+// Usage
+const accessToken = await getAccessToken('your-organization-id', 'your-api-key');
+```
+
+#### Important Notes
+
+- **Token Expiration**: Access tokens are valid for **5 minutes** only. You should implement token refresh logic if your application requires longer sessions.
+- **Server-Side Generation**: For security best practices, generate access tokens on your backend server rather than in client-side code. This prevents exposing your API key to end users.
+- **Token Refresh**: If your application needs to maintain a session longer than 5 minutes, implement a mechanism to refresh the token before it expires.
+
+### Choosing the Right Authentication Method
+
+- **Use API Key** when:
+  - Building prototypes or testing
+  - Your application runs in a secure, server-side environment
+  - You need a simple, straightforward setup
+
+- **Use Access Token** when:
+  - Deploying to production
+  - Your application has client-side components
+  - You require enhanced security with temporary credentials
+  - You want to minimize the risk of credential exposure
+
 ## Initialize the SDK
 
 In case of using NPM, use the following code snippet to initialize the SDK.
