@@ -396,8 +396,14 @@ class ISelfieTestInstance {
 
             const isAvailable = await this.checkOrgStatus();
 
-            if(!isAvailable) {
-                reject(new Error('You have reached the maximum limit of cardio test usage policy. Please reach out to administrator.'));
+            if(!isAvailable?.value) {
+                const errorMessage = isAvailable?.message || 'You have reached the maximum limit of cardio test usage policy. Please reach out to administrator.';
+                const error = new Error(errorMessage);
+                if (isAvailable?.code) {
+                    error.code = isAvailable.code;
+                }
+                reject(error);
+                return;
             }
     
             // Try creating the iframe with retries
@@ -461,7 +467,7 @@ export default async function ISelfieTest(options) {
         // Verify API key and fetch additional data
         const isAvailable = await instance.initialize();
 
-        if(isAvailable) {
+        if(isAvailable?.value) {
             return {
                 success: true,
                 message: "SDK initialized successfully.",
