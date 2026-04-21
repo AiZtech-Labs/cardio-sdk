@@ -77,6 +77,7 @@ class ISelfieTestInstance {
             },
             progressBarPosition: _config?.options?.progressBarPosition ?? 'bottom', // Position of the progress bar
             showLanguageSelector: _config?.options?.showLanguageSelector ?? true, // Show language selector
+            enableMobileCameraSwap: _config?.options?.enableMobileCameraSwap ?? false, // Allow users to swap between front/rear cameras on mobile devices during the test
         };
 
         // Styling options
