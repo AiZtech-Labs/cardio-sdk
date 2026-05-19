@@ -44,6 +44,7 @@ const sdk = await ISelfieTestSDK({
     testTerminationTimeOut: 7,
     progressBarPosition: "top",
     showLanguageSelector: true,
+    enableMobileCameraSwap: false,
     instructionPage: {
       hidden: false,
       instructionContent: null
@@ -107,6 +108,7 @@ In case of using direct script tag for HTML, use the code below.
         testTerminationTimeOut: 7,
         progressBarPosition: "top",
         showLanguageSelector: true,
+        enableMobileCameraSwap: false,
         instructionPage: {
           hidden: false,
           instructionContent: null
@@ -231,6 +233,10 @@ This option will show the progress bar either on top or bottom of the video/came
 **`showLanguageSelector`**: (boolean)  
 This option will show or hide the language selector.
 **Default**: `true`  
+
+**`enableMobileCameraSwap`**: (boolean)  
+On phones and tablets (non-desktop browsers), when set to `true`, the live test shows a control that lets the user switch between the front (user) and rear (environment) camera. No effect on desktop. You can also persist this flag in organization `options` so partner embeds merge it with other defaults.  
+**Default**: `false`  
 
 **`instructionPage`**: (object)  
 Customization options for the instruction page displayed before the test starts:
