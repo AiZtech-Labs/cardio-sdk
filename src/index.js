@@ -35,6 +35,10 @@ export const ERROR_CODES = {
     AIZERR009: {
         code: 'AIZERR009',
         note: 'Invalid API key'
+    },
+    AIZERR010: {
+        code: 'AIZERR010',
+        note: 'Product not entitled'
     }
 };
 
@@ -57,6 +61,10 @@ class ISelfieTestInstance {
         this.organizationId = _config?.organizationId || ''; // Organization ID
         this.containerId = _config?.containerId || 'iselfietest'; // ID of the container for the iframe
         this.verificationMethod = _config?.verificationMethod || 'apikey'; // Verification method: 'apikey' or 'accesstoken' (case insensitive)
+        // Entitlement source: 'legacy' (default) checks accountType/trial fields client-side;
+        // 'rbac' gates on the server's enforced entitlement block from orgStatus (falls back to
+        // legacy when the server doesn't send one). Both systems coexist; old servers keep working.
+        this.entitlementSource = String(_config?.entitlementSource || 'legacy').toLowerCase();
 
         // Options for customizing the test
         this.options = {
@@ -192,10 +200,42 @@ class ISelfieTestInstance {
         }
     }
 
+    // Gate on the server's enforced entitlement block (orgStatus.entitlement). The server computes
+    // it from the same meter the API enforces with, so this refuses BEFORE the camera opens instead
+    // of scanning and being 402'd at the results call. Only blocks when the server says
+    // mode:'enforce' — at off/shadow the backend would serve the test, so we must not refuse it.
+    checkRbacEntitlement(entitlement) {
+        if (entitlement?.mode !== 'enforce') {
+            return { value: true, message: `Entitlement mode ${entitlement?.mode || 'unknown'} — server not enforcing` };
+        }
+        const cardio = entitlement?.products?.cardio;
+        if (!cardio) return { value: true, message: 'No cardio entitlement data — deferring to server' };
+        if (cardio.entitled === false) {
+            console.error(ERROR_CODES.AIZERR010.note);
+            return { value: false, message: 'Product not entitled', code: ERROR_CODES.AIZERR010.code };
+        }
+        if (cardio.expired) {
+            console.error(ERROR_CODES.AIZERR001.note);
+            return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
+        }
+        if (!cardio.unlimited && cardio.remaining !== null && cardio.remaining <= 0) {
+            console.error(ERROR_CODES.AIZERR002.note);
+            return { value: false, message: 'Usage limit exceeded', code: ERROR_CODES.AIZERR002.code };
+        }
+        return { value: true, message: 'Entitled' };
+    }
+
     // Check organization status
     async checkOrgStatus() {
         // Fetch additional data
         const orgStatus = await this.fetchOrgStatus();
+
+        // RBAC path: the server's entitlement block is authoritative when opted in AND present.
+        // A legacy server sends no block, so the legacy checks below keep working unchanged.
+        if (this.entitlementSource === 'rbac' && orgStatus?.entitlement) {
+            return this.checkRbacEntitlement(orgStatus.entitlement);
+        }
+
         const subscriptionList = await this.fetchSubscriptionList();
 
         const accountType = orgStatus?.accountType;
