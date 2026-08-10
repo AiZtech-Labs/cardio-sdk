@@ -20,7 +20,11 @@ export const ERROR_CODES = {
         code: 'AIZERR004',
         note: 'No active subscription'
     },
-    AIZERR006: {
+    // Keyed AIZERR005 to match the code it emits. It was keyed AIZERR006 while emitting
+    // 'AIZERR005', so `ERROR_CODES.AIZERR006.code` read back a different string than its own name —
+    // the KEY was the typo, not the code. Renaming the key keeps the wire value integrators already
+    // match on unchanged; changing the code would have broken them.
+    AIZERR005: {
         code: 'AIZERR005',
         note: 'Domain not allowed or Invalid API key'
     },
@@ -200,6 +204,25 @@ class ISelfieTestInstance {
         }
     }
 
+    // Is this denial an expired trial rather than a missing product?
+    //
+    // Three signals, in descending order of directness, because a given backend may only offer some:
+    //   reason 'trial_expired' — the server said so outright (newest servers).
+    //   expired:true           — the meter's trial window has passed but the org's accountType has
+    //                            not flipped yet, so the resolver still sees a live trial.
+    //   accountType            — from verifyApiKey's organization. This is the fallback that keeps
+    //                            the SDK correct against a backend predating either field, and it is
+    //                            also the ONLY reliable signal once an operator override is set: the
+    //                            server's expiry check requires source==='trial', so an override
+    //                            silently suppresses `expired`.
+    isTrialExpired(product) {
+        return (
+            product?.reason === 'trial_expired' ||
+            !!product?.expired ||
+            String(this.organization?.accountType || '').toLowerCase() === 'trial_expired'
+        );
+    }
+
     // Gate on the server's enforced entitlement block (orgStatus.entitlement). The server computes
     // it from the same meter the API enforces with, so this refuses BEFORE the camera opens instead
     // of scanning and being 402'd at the results call. Only blocks when the server says
@@ -211,8 +234,13 @@ class ISelfieTestInstance {
         const cardio = entitlement?.products?.cardio;
         if (!cardio) return { value: true, message: 'No cardio entitlement data — deferring to server' };
         if (cardio.entitled === false) {
-            console.error(ERROR_CODES.AIZERR010.note);
-            return { value: false, message: 'Product not entitled', code: ERROR_CODES.AIZERR010.code };
+            // An expired trial and a product that was never sold are BOTH entitled:false, so this
+            // branch has to separate them or every denial reads as "you don't own this". The legacy
+            // check below distinguishes them (accountType 'trial_expired' -> AIZERR001), and
+            // integrators handle that code today, so losing it here would be a silent regression.
+            const err = this.isTrialExpired(cardio) ? ERROR_CODES.AIZERR001 : ERROR_CODES.AIZERR010;
+            console.error(err.note);
+            return { value: false, message: err.note, code: err.code };
         }
         if (cardio.expired) {
             console.error(ERROR_CODES.AIZERR001.note);
@@ -318,8 +346,8 @@ class ISelfieTestInstance {
             } else if (result.message === 'Verification failed across all regions. Invalid public key or domain.') {
                 const availability = {
                     value: false,
-                    message: ERROR_CODES.AIZERR006.note,
-                    code: ERROR_CODES.AIZERR006.code
+                    message: ERROR_CODES.AIZERR005.note,
+                    code: ERROR_CODES.AIZERR005.code
                 };
                 this.isAvailable = availability;
                 return this.isAvailable;
