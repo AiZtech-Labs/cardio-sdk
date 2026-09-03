@@ -43,8 +43,29 @@ export const ERROR_CODES = {
     AIZERR010: {
         code: 'AIZERR010',
         note: 'Product not entitled'
+    },
+    AIZERR011: {
+        code: 'AIZERR011',
+        note: 'Test cancelled'
     }
 };
+
+// Backward-compatible alias. Releases up to 0.1.14 exported the 'AIZERR005' entry under the key
+// AIZERR006, so integrators may reference `ERROR_CODES.AIZERR006.code`. Aliasing (not copying) the
+// same object keeps that expression working and still reading 'AIZERR005', the wire value.
+ERROR_CODES.AIZERR006 = ERROR_CODES.AIZERR005;
+
+// Parse a fetch Response body as JSON. Returns {} when the body is empty or not JSON (an HTML
+// error page from a proxy, a 204, a truncated response) so callers can read fields off the
+// result with plain property access instead of crashing on the parse.
+async function readJson(response) {
+    try {
+        const body = await response.json();
+        return body && typeof body === 'object' ? body : {};
+    } catch (error) {
+        return {};
+    }
+}
 
 // Class representing the iSelfieTest instance
 class ISelfieTestInstance {
@@ -134,7 +155,12 @@ class ISelfieTestInstance {
                 });
             }
             
-            result = await response.json();
+            result = await readJson(response);
+            if (!response.ok) {
+                // A non-2xx status (401/403/5xx, or a proxy error page) is a failed verification
+                // even when the body carries no `success` flag; the code mapping below applies.
+                result.success = false;
+            }
             this.success = result.success;
             this.organization = result.organization || null;
             
@@ -164,10 +190,29 @@ class ISelfieTestInstance {
         }
     }
 
+    // Build the Error thrown for a non-2xx API response. 401/403 mean the credential was rejected,
+    // so they map to the same code verifyApiKey() reports for this verification method; 404 means
+    // the organization the credential named does not exist (AIZERR007); any other status (429,
+    // 5xx, a proxy page) is reported as AIZERR004 so the caller still receives a code.
+    httpError(response, body, fallbackMessage) {
+        const error = new Error(body?.message || fallbackMessage);
+        if (response.status === 401 || response.status === 403) {
+            error.code = this.verificationMethod?.toLowerCase() === 'accesstoken'
+                ? ERROR_CODES.AIZERR008.code
+                : ERROR_CODES.AIZERR009.code;
+        } else if (response.status === 404) {
+            error.code = ERROR_CODES.AIZERR007.code;
+        } else {
+            error.code = ERROR_CODES.AIZERR004.code;
+        }
+        return error;
+    }
+
     // Fetch organization status
     async fetchOrgStatus() {
+        let response;
         try {
-            const response = await fetch(`${this.config.backend_url}/sdk/central/orgStatus`, {
+            response = await fetch(`${this.config.backend_url}/sdk/central/orgStatus`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -177,11 +222,14 @@ class ISelfieTestInstance {
                     organizationId: this.organization._id, // Include the orgId in the request body
                 }),
             });
-            const result = await response.json();
-            return result.data; // Return orgStatus result
         } catch (error) {
             throw new Error('Failed to fetch organization status.');
         }
+        const result = await readJson(response);
+        if (!response.ok) {
+            throw this.httpError(response, result, 'Failed to fetch organization status.');
+        }
+        return result.data; // Return orgStatus result
     }
 
     // Fetch subscription list
@@ -189,19 +237,25 @@ class ISelfieTestInstance {
         if (!this.organization?._id) {
             throw new Error('Organization ID not available.');
         }
+        let response;
         try {
-            const response = await fetch(`${this.config.backend_url}/subscription/central/sdk/${this.organization._id}/list`, {
+            response = await fetch(`${this.config.backend_url}/subscription/central/sdk/${this.organization._id}/list`, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Api-Key': this.apiKey,
                 },
             });
-            const result = await response.json();
-            return result.subscriptions; // Return subscription list result
         } catch (error) {
             throw new Error('Failed to fetch subscription list.');
         }
+        const result = await readJson(response);
+        if (!response.ok) {
+            throw this.httpError(response, result, 'Failed to fetch subscription list.');
+        }
+        // A missing or null `subscriptions` value must read as "no subscriptions", not crash the
+        // caller's .filter().
+        return Array.isArray(result.subscriptions) ? result.subscriptions : [];
     }
 
     // Is this denial an expired trial rather than a missing product?
@@ -255,79 +309,90 @@ class ISelfieTestInstance {
 
     // Check organization status
     async checkOrgStatus() {
-        // Fetch additional data
-        const orgStatus = await this.fetchOrgStatus();
+        try {
+            // Fetch additional data
+            const orgStatus = await this.fetchOrgStatus();
 
-        // RBAC path: the server's entitlement block is authoritative when opted in AND present.
-        // A legacy server sends no block, so the legacy checks below keep working unchanged.
-        if (this.entitlementSource === 'rbac' && orgStatus?.entitlement) {
-            return this.checkRbacEntitlement(orgStatus.entitlement);
-        }
-
-        const subscriptionList = await this.fetchSubscriptionList();
-
-        const accountType = orgStatus?.accountType;
-        const totalCardioTestCount = orgStatus?.totalCardioTestCount || 0;
-
-        const activeSubscriptions = subscriptionList.filter(
-            (sub) => sub?.productType === "cardio" && sub?.stripe?.status === "active"
-        );
-
-        if (accountType === 'free') {
-            return { value: true, message: 'Free account' };
-        }
-
-        if (accountType === 'trial_expired') {
-            console.error(ERROR_CODES.AIZERR001.note);
-            return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
-        }
-
-        if (accountType === 'trial') {
-            // Check if trial has expired
-            const trialEnd = new Date(this.organization?.trialEnd);
-            const now = new Date();
-
-            // Check if trialEnd is valid and compare dates
-            if (isAfter(now, trialEnd)) {
-                console.error(ERROR_CODES.AIZERR001.note);
-                return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
+            // RBAC path: the server's entitlement block is authoritative when opted in AND present.
+            // A legacy server sends no block, so the legacy checks below keep working unchanged.
+            if (this.entitlementSource === 'rbac' && orgStatus?.entitlement) {
+                return this.checkRbacEntitlement(orgStatus.entitlement);
             }
 
-            // Check if trial usage limit has been exceeded
-            const cardioTrialTestLimit = this.organization?.cardioTrialTestLimit || 0;
-            const remainingCardioTests = cardioTrialTestLimit - totalCardioTestCount;
-            if (remainingCardioTests > 0) {
-                return { value: true, message: 'Active trial account' };
-            } else {
-                console.error(ERROR_CODES.AIZERR002.note);
-                return { value: false, message: 'Trial usage limit exceeded', code: ERROR_CODES.AIZERR002.code };
-            }
-        }
-        if (accountType === 'active') {
-            const { cardio } = orgStatus?.testLimitByCurrentSubscription;
-            const cardioCount = cardio.testLimit
-                ? cardio.testLimit.interval_count * cardio.testLimit.unit
-                : 0;
-            const remainingCardioTests = cardioCount - totalCardioTestCount;
+            const subscriptionList = await this.fetchSubscriptionList();
+
+            const accountType = orgStatus?.accountType;
+            const totalCardioTestCount = orgStatus?.totalCardioTestCount || 0;
 
             const activeSubscriptions = subscriptionList.filter(
                 (sub) => sub?.productType === "cardio" && sub?.stripe?.status === "active"
             );
 
-            if (remainingCardioTests > 0 && activeSubscriptions.length > 0) {
-                return { value: true, message: 'Active subscription' };
-            } else {
-                console.error(ERROR_CODES.AIZERR003.note);
-                return { value: false, message: 'Active subscription usage limit exceeded', code: ERROR_CODES.AIZERR003.code };
+            if (accountType === 'free') {
+                return { value: true, message: 'Free account' };
             }
-        }
 
-        if (accountType === 'active' && activeSubscriptions.length === 0) {
-            console.error(ERROR_CODES.AIZERR004.note);
+            if (accountType === 'trial_expired') {
+                console.error(ERROR_CODES.AIZERR001.note);
+                return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
+            }
+
+            if (accountType === 'trial') {
+                // Check if trial has expired
+                const trialEnd = new Date(this.organization?.trialEnd);
+                const now = new Date();
+
+                // Check if trialEnd is valid and compare dates
+                if (isAfter(now, trialEnd)) {
+                    console.error(ERROR_CODES.AIZERR001.note);
+                    return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
+                }
+
+                // Check if trial usage limit has been exceeded
+                const cardioTrialTestLimit = this.organization?.cardioTrialTestLimit || 0;
+                const remainingCardioTests = cardioTrialTestLimit - totalCardioTestCount;
+                if (remainingCardioTests > 0) {
+                    return { value: true, message: 'Active trial account' };
+                } else {
+                    console.error(ERROR_CODES.AIZERR002.note);
+                    return { value: false, message: 'Trial usage limit exceeded', code: ERROR_CODES.AIZERR002.code };
+                }
+            }
+            if (accountType === 'active') {
+                const cardio = orgStatus?.testLimitByCurrentSubscription?.cardio;
+                const cardioCount = cardio?.testLimit
+                    ? cardio.testLimit.interval_count * cardio.testLimit.unit
+                    : 0;
+                const remainingCardioTests = cardioCount - totalCardioTestCount;
+
+                const activeSubscriptions = subscriptionList.filter(
+                    (sub) => sub?.productType === "cardio" && sub?.stripe?.status === "active"
+                );
+
+                if (remainingCardioTests > 0 && activeSubscriptions.length > 0) {
+                    return { value: true, message: 'Active subscription' };
+                } else {
+                    console.error(ERROR_CODES.AIZERR003.note);
+                    return { value: false, message: 'Active subscription usage limit exceeded', code: ERROR_CODES.AIZERR003.code };
+                }
+            }
+
+            if (accountType === 'active' && activeSubscriptions.length === 0) {
+                console.error(ERROR_CODES.AIZERR004.note);
+                return { value: false, message: 'No active subscription', code: ERROR_CODES.AIZERR004.code };
+            }
+
             return { value: false, message: 'No active subscription', code: ERROR_CODES.AIZERR004.code };
+        } catch (error) {
+            // A failed status/subscription request (auth rejected, 5xx, network) becomes a coded
+            // refusal instead of an exception, so initialize() and startTest() always settle.
+            console.error('Organization status check failed:', error?.message ?? error);
+            return {
+                value: false,
+                message: error?.message || 'Failed to check organization status.',
+                code: error?.code || ERROR_CODES.AIZERR004.code
+            };
         }
-
-        return { value: false, message: 'No active subscription', code: ERROR_CODES.AIZERR004.code };
     }
 
     // Wrapper method to verify API key and call additional APIs
@@ -440,59 +505,93 @@ class ISelfieTestInstance {
         }, 1000);
     }
 
+    // Settle the pending startTest() promise, if any, and drop the handlers so a later message
+    // (a second 'message' listener, a stray close) cannot touch an already-settled test.
+    settleTest(kind, payload) {
+        const settle = kind === 'reject' ? this.rejectTest : this.resolveTest;
+        this.resolveTest = null;
+        this.rejectTest = null;
+        settle?.(payload);
+    }
+
     // Method to handle incoming messages from the iframe
     handleIncomingMessages(event) {
-        const { type, data } = event.data;
+        const { type, data } = event.data || {};
 
-        if (type === 'iselfietest-close') this.closeTest(); // Close the test on 'close' message
+        if (type === 'iselfietest-close') {
+            // A closed test can never complete, so a still-pending promise must be rejected
+            // rather than left pending forever.
+            if (this.resolveTest) {
+                const error = new Error(ERROR_CODES.AIZERR011.note);
+                error.code = ERROR_CODES.AIZERR011.code;
+                this.settleTest('reject', error);
+            }
+            this.closeTest(); // Close the test on 'close' message
+        }
 
         if (type === 'iselfietest-complete') {
-            this.resolveTest?.(data); // Resolve the test promise with data
+            this.settleTest('resolve', data); // Resolve the test promise with data
             this.closeTest(); // Close the iframe
         }
 
         if (type === 'iselfietest-error') {
-            this.rejectTest?.(data); // Reject the test promise with error data
+            const error = new Error(data?.message || 'Test failed');
+            if (data?.code) error.code = data.code; // Carry the embedded page's code up to .catch()
+            this.settleTest('reject', error); // Reject the test promise with the error
             this.closeTest(); // Close the iframe
+        }
+
+        if (type === 'iselfietest-credential') {
+            // The embedded page renews the short-lived access token and hands the new one up;
+            // adopting it keeps later startTest() calls (and their API requests) working.
+            if (typeof data?.apiKey === 'string' && data.apiKey) {
+                this.apiKey = data.apiKey;
+            }
         }
     }
 
     // Method to start the test
     startTest() {
         return new Promise(async (resolve, reject) => {
-            this.resolveTest = resolve; // Set resolve handler
-            this.rejectTest = reject; // Set reject handler
+            // An async executor swallows its own throws, which would leave the promise pending
+            // forever; route anything unexpected to reject() instead.
+            try {
+                this.resolveTest = resolve; // Set resolve handler
+                this.rejectTest = reject; // Set reject handler
 
-            const isAvailable = await this.checkOrgStatus();
+                const isAvailable = await this.checkOrgStatus();
 
-            if(!isAvailable?.value) {
-                const errorMessage = isAvailable?.message || 'You have reached the maximum limit of cardio test usage policy. Please reach out to administrator.';
-                const error = new Error(errorMessage);
-                if (isAvailable?.code) {
-                    error.code = isAvailable.code;
+                if(!isAvailable?.value) {
+                    const errorMessage = isAvailable?.message || 'You have reached the maximum limit of cardio test usage policy. Please reach out to administrator.';
+                    const error = new Error(errorMessage);
+                    if (isAvailable?.code) {
+                        error.code = isAvailable.code;
+                    }
+                    reject(error);
+                    return;
                 }
+
+                // Try creating the iframe with retries
+                const tryCreateIframe = (retryCount = 0) => {
+                    const container = document.getElementById(this.containerId);
+
+                    if (container) {
+                        this.createIframe(container);
+                    } else if (retryCount < 3) {
+                        console.warn(
+                            `Container element with ID "${this.containerId}" not found. Retrying... (${retryCount + 1}/3)`
+                        );
+                        setTimeout(() => tryCreateIframe(retryCount + 1), 1000); // Retry after 1 second
+                    } else {
+                        console.error(`Container element with ID "${this.containerId}" not found after 3 attempts.`);
+                        reject(new Error(`Container element with ID "${this.containerId}" not found.`));
+                    }
+                };
+
+                tryCreateIframe();
+            } catch (error) {
                 reject(error);
-                return;
             }
-    
-            // Try creating the iframe with retries
-            const tryCreateIframe = (retryCount = 0) => {
-                const container = document.getElementById(this.containerId);
-
-                if (container) {
-                    this.createIframe(container);
-                } else if (retryCount < 3) {
-                    console.warn(
-                        `Container element with ID "${this.containerId}" not found. Retrying... (${retryCount + 1}/3)`
-                    );
-                    setTimeout(() => tryCreateIframe(retryCount + 1), 1000); // Retry after 1 second
-                } else {
-                    console.error(`Container element with ID "${this.containerId}" not found after 3 attempts.`);
-                    reject(new Error(`Container element with ID "${this.containerId}" not found.`));
-                }
-            };
-
-            tryCreateIframe();
         });
     }
 
