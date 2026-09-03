@@ -17,6 +17,7 @@ const VERIFY_URL = 'https://api.test/sdk/central/verify';
 const TOKEN_VERIFY_URL = 'https://api.test/sdk/central/access-token/verify';
 const ORG_STATUS_URL = 'https://api.test/sdk/central/orgStatus';
 const SUBSCRIPTIONS_URL = 'https://api.test/subscription/central/sdk/org1/list';
+const REFRESH_URL = 'https://api.test/sdk/central/access-token/refresh';
 
 const NOT_JSON = Symbol('not-json');
 
@@ -53,6 +54,7 @@ function mockFetch(routes) {
         if (url === VERIFY_URL || url === TOKEN_VERIFY_URL) key = 'verify';
         else if (url === ORG_STATUS_URL) key = 'orgStatus';
         else if (url.startsWith('https://api.test/subscription/central/sdk/')) key = 'subscriptions';
+        else if (url === REFRESH_URL) key = 'refresh';
 
         const route = key && routes[key];
         if (!route) throw new Error(`Unexpected fetch: ${url}`);
@@ -397,8 +399,8 @@ describe('entitlementSource: rbac', () => {
         expect(calledUrls(fetchMock)).toEqual([VERIFY_URL, ORG_STATUS_URL, SUBSCRIPTIONS_URL]);
     });
 
-    test('legacy (default) source ignores an enforced entitlement block', async () => {
-        const { sdk } = await initSdk(API_KEY_CONFIG, {
+    test("explicit 'legacy' source ignores an enforced entitlement block (the pre-2.0 default)", async () => {
+        const { sdk } = await initSdk({ ...API_KEY_CONFIG, entitlementSource: 'legacy' }, {
             verify: VERIFIED,
             orgStatus: {
                 status: 200,
@@ -644,5 +646,182 @@ describe('iframe messages', () => {
         // A close with nothing pending is a no-op (no second rejection, no exception).
         postFromIframe({ type: 'iselfietest-close' });
         expect(uncaught).not.toHaveBeenCalled();
+    });
+});
+
+// --- 2.0.0 ---------------------------------------------------------------------------------------
+
+const ENFORCE_BLOCK = (cardio) => ({ mode: 'enforce', products: { cardio } });
+const statusWithBlock = (block, accountType = 'trial') => ({
+    status: 200,
+    body: { data: { accountType, totalCardioTestCount: 0, entitlement: block } },
+});
+
+// A JWT-shaped token whose payload carries `exp` (seconds). Signature is never checked client-side.
+const tokenExpiringInMs = (ms) => {
+    const payload = { organizationId: 'org1', exp: Math.floor((Date.now() + ms) / 1000) };
+    const b64 = btoa(JSON.stringify(payload)).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+    return `eyJhbGciOiJIUzI1NiJ9.${b64}.sig`;
+};
+
+describe("2.0.0 — entitlementSource 'auto' follows an enforcing server", () => {
+    test('default is auto: an enforcing block decides, and the subscription list is not fetched', async () => {
+        const { sdk, fetchMock } = await initSdk(API_KEY_CONFIG, {
+            verify: VERIFIED,
+            orgStatus: statusWithBlock(ENFORCE_BLOCK({ entitled: false, reason: 'trial_expired' })),
+            subscriptions: NO_SUBS,
+        });
+        expect(sdk.isAvailable.code).toBe('AIZERR001');
+        expect(calledUrls(fetchMock)).toEqual([VERIFY_URL, ORG_STATUS_URL]);
+    });
+
+    test('auto: an enforcing block that allows lets a trial org test even when the legacy arithmetic would refuse', async () => {
+        // Legacy would say AIZERR002 here (cardioTrialTestLimit 0 - 0 tests = 0 remaining); the server says entitled.
+        const { sdk } = await initSdk(API_KEY_CONFIG, {
+            verify: { status: 200, body: { success: true, organization: { ...ORG, accountType: 'trial', cardioTrialTestLimit: 0, trialEnd: new Date(Date.now() + 86400000).toISOString() } } },
+            orgStatus: statusWithBlock(ENFORCE_BLOCK({ entitled: true, unlimited: false, remaining: 5 })),
+            subscriptions: NO_SUBS,
+        });
+        expect(sdk.success).toBe(true);
+        expect(sdk.isAvailable.value).toBe(true);
+    });
+
+    test('auto: a block at off/shadow is ignored and the legacy check decides (subscriptions fetched)', async () => {
+        const { sdk, fetchMock } = await initSdk(API_KEY_CONFIG, {
+            verify: VERIFIED,
+            orgStatus: statusWithBlock({ mode: 'shadow', products: { cardio: { entitled: false } } }, 'free'),
+            subscriptions: NO_SUBS,
+        });
+        expect(sdk.isAvailable).toEqual({ value: true, message: 'Free account' });
+        expect(calledUrls(fetchMock)).toEqual([VERIFY_URL, ORG_STATUS_URL, SUBSCRIPTIONS_URL]);
+    });
+
+    test('auto against a server that sends no block runs the legacy check, exactly as 0.1.x did', async () => {
+        const { sdk, fetchMock } = await initSdk(API_KEY_CONFIG, {
+            verify: VERIFIED,
+            orgStatus: FREE_STATUS,
+            subscriptions: NO_SUBS,
+        });
+        expect(sdk.isAvailable).toEqual({ value: true, message: 'Free account' });
+        expect(calledUrls(fetchMock)).toEqual([VERIFY_URL, ORG_STATUS_URL, SUBSCRIPTIONS_URL]);
+    });
+
+    test("explicit 'legacy' never looks at the block", async () => {
+        const { sdk } = await initSdk({ ...API_KEY_CONFIG, entitlementSource: 'legacy' }, {
+            verify: VERIFIED,
+            orgStatus: statusWithBlock(ENFORCE_BLOCK({ entitled: false, reason: 'plan' }), 'free'),
+            subscriptions: NO_SUBS,
+        });
+        expect(sdk.isAvailable).toEqual({ value: true, message: 'Free account' });
+    });
+
+    test("explicit 'rbac' honours a block even at shadow (allows, without the legacy check)", async () => {
+        const { sdk, fetchMock } = await initSdk({ ...API_KEY_CONFIG, entitlementSource: 'rbac' }, {
+            verify: VERIFIED,
+            orgStatus: statusWithBlock({ mode: 'shadow', products: { cardio: { entitled: false } } }, 'trial_expired'),
+            subscriptions: NO_SUBS,
+        });
+        expect(sdk.isAvailable.value).toBe(true);
+        expect(calledUrls(fetchMock)).toEqual([VERIFY_URL, ORG_STATUS_URL]);
+    });
+
+    test('an unknown entitlementSource value falls back to auto', async () => {
+        const { sdk, fetchMock } = await initSdk({ ...API_KEY_CONFIG, entitlementSource: 'bogus' }, {
+            verify: VERIFIED,
+            orgStatus: statusWithBlock(ENFORCE_BLOCK({ entitled: false })),
+            subscriptions: NO_SUBS,
+        });
+        expect(sdk.isAvailable.code).toBe('AIZERR010');
+        expect(calledUrls(fetchMock)).toEqual([VERIFY_URL, ORG_STATUS_URL]);
+    });
+});
+
+describe('2.0.0 — the credential is renewed before a test starts', () => {
+    const containerReady = () => {
+        const div = document.createElement('div');
+        div.id = 'iselfietest';
+        document.body.appendChild(div);
+        return div;
+    };
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    test('a token with less than two minutes left is renewed, and the new token is what the test uses', async () => {
+        const stale = tokenExpiringInMs(60 * 1000);
+        const fresh = tokenExpiringInMs(5 * 60 * 1000);
+        const { sdk, fetchMock } = await initSdk({ ...ACCESS_TOKEN_CONFIG, apiKey: stale }, {
+            verify: VERIFIED,
+            orgStatus: FREE_STATUS,
+            subscriptions: NO_SUBS,
+            refresh: { status: 200, body: { success: true, access_token: fresh, kind: 'partner' } },
+        });
+        expect(sdk.success).toBe(true);
+        containerReady();
+        sdk.startCardioTest().catch(() => {});
+        await flush();
+        await flush();
+
+        const urls = calledUrls(fetchMock);
+        const refreshIdx = urls.indexOf(REFRESH_URL);
+        expect(refreshIdx).toBeGreaterThan(-1);
+        // Renewed BEFORE the status check that startCardioTest() runs.
+        expect(urls.lastIndexOf(ORG_STATUS_URL)).toBeGreaterThan(refreshIdx);
+        const [, refreshInit] = fetchMock.mock.calls[refreshIdx];
+        expect(refreshInit.headers['X-Api-Key']).toBe(stale);
+        const [, statusInit] = fetchMock.mock.calls[urls.lastIndexOf(ORG_STATUS_URL)];
+        expect(statusInit.headers['X-Api-Key']).toBe(fresh);
+    });
+
+    test('a token with plenty of life left is not renewed', async () => {
+        const live = tokenExpiringInMs(30 * 60 * 1000);
+        const { sdk, fetchMock } = await initSdk({ ...ACCESS_TOKEN_CONFIG, apiKey: live }, {
+            verify: VERIFIED, orgStatus: FREE_STATUS, subscriptions: NO_SUBS,
+        });
+        containerReady();
+        sdk.startCardioTest().catch(() => {});
+        await flush();
+        expect(calledUrls(fetchMock)).not.toContain(REFRESH_URL);
+    });
+
+    test('a raw API key is never renewed', async () => {
+        const { sdk, fetchMock } = await initSdk(API_KEY_CONFIG, { verify: VERIFIED, orgStatus: FREE_STATUS, subscriptions: NO_SUBS });
+        containerReady();
+        sdk.startCardioTest().catch(() => {});
+        await flush();
+        expect(calledUrls(fetchMock)).not.toContain(REFRESH_URL);
+    });
+
+    test('a server without the refresh route (404) keeps the current token and the test proceeds', async () => {
+        const stale = tokenExpiringInMs(60 * 1000);
+        const { sdk, fetchMock } = await initSdk({ ...ACCESS_TOKEN_CONFIG, apiKey: stale }, {
+            verify: VERIFIED, orgStatus: FREE_STATUS, subscriptions: NO_SUBS,
+            refresh: { status: 404, body: NOT_JSON },
+        });
+        containerReady();
+        const p = sdk.startCardioTest();
+        p.catch(() => {});
+        await flush();
+        await flush();
+        const urls = calledUrls(fetchMock);
+        expect(urls).toContain(REFRESH_URL);
+        const [, statusInit] = fetchMock.mock.calls[urls.lastIndexOf(ORG_STATUS_URL)];
+        expect(statusInit.headers['X-Api-Key']).toBe(stale);
+        expect(document.getElementById('iselfietest-iframe')).not.toBeNull(); // the test still started
+    });
+
+    test('a network failure on refresh is swallowed', async () => {
+        const stale = tokenExpiringInMs(60 * 1000);
+        const { sdk, fetchMock } = await initSdk({ ...ACCESS_TOKEN_CONFIG, apiKey: stale }, {
+            verify: VERIFIED, orgStatus: FREE_STATUS, subscriptions: NO_SUBS,
+            refresh: new TypeError('Failed to fetch'),
+        });
+        containerReady();
+        sdk.startCardioTest().catch(() => {});
+        await flush();
+        await flush();
+        expect(calledUrls(fetchMock)).toContain(REFRESH_URL);
+        expect(document.getElementById('iselfietest-iframe')).not.toBeNull();
     });
 });

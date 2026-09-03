@@ -86,10 +86,17 @@ class ISelfieTestInstance {
         this.organizationId = _config?.organizationId || ''; // Organization ID
         this.containerId = _config?.containerId || 'iselfietest'; // ID of the container for the iframe
         this.verificationMethod = _config?.verificationMethod || 'apikey'; // Verification method: 'apikey' or 'accesstoken' (case insensitive)
-        // Entitlement source: 'legacy' (default) checks accountType/trial fields client-side;
-        // 'rbac' gates on the server's enforced entitlement block from orgStatus (falls back to
-        // legacy when the server doesn't send one). Both systems coexist; old servers keep working.
-        this.entitlementSource = String(_config?.entitlementSource || 'legacy').toLowerCase();
+        // Entitlement source — how the SDK decides whether a test may start:
+        //   'auto'   (default since 2.0.0) follow the server when it sends an entitlement block in
+        //            orgStatus AND says it is enforcing; otherwise run the legacy client-side check.
+        //            Once a server enforces, its answer is what the results call will be judged by,
+        //            so the client-side arithmetic can only disagree with it.
+        //   'rbac'   gate on the server's block whenever it is present (also at off/shadow, where
+        //            it allows); legacy check only when no block is sent.
+        //   'legacy' never look at the block; the pre-2.0 behaviour.
+        // Old servers send no block, so every mode keeps working against them.
+        this.entitlementSource = String(_config?.entitlementSource || 'auto').toLowerCase();
+        if (!['auto', 'rbac', 'legacy'].includes(this.entitlementSource)) this.entitlementSource = 'auto';
 
         // Options for customizing the test
         this.options = {
@@ -313,10 +320,14 @@ class ISelfieTestInstance {
             // Fetch additional data
             const orgStatus = await this.fetchOrgStatus();
 
-            // RBAC path: the server's entitlement block is authoritative when opted in AND present.
+            // Server-driven path. 'rbac': the block is authoritative whenever present. 'auto': only
+            // when the server says it is ENFORCING — at off/shadow the server would serve the test
+            // whatever the block says, so the legacy check keeps deciding, exactly as before 2.0.
             // A legacy server sends no block, so the legacy checks below keep working unchanged.
-            if (this.entitlementSource === 'rbac' && orgStatus?.entitlement) {
-                return this.checkRbacEntitlement(orgStatus.entitlement);
+            const block = orgStatus?.entitlement;
+            if (block && (this.entitlementSource === 'rbac' ||
+                (this.entitlementSource === 'auto' && block.mode === 'enforce'))) {
+                return this.checkRbacEntitlement(block);
             }
 
             const subscriptionList = await this.fetchSubscriptionList();
@@ -393,6 +404,48 @@ class ISelfieTestInstance {
                 code: error?.code || ERROR_CODES.AIZERR004.code
             };
         }
+    }
+
+    // Expiry of the credential when it is an SDK access token (a JWT with `exp`), else null for
+    // a raw API key. The signature is not checked here — the server does that.
+    credentialExpiresAtMs() {
+        if (typeof this.apiKey !== 'string') return null;
+        const parts = this.apiKey.split('.');
+        if (parts.length !== 3) return null;
+        try {
+            const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+            const payload = JSON.parse(atob(base64 + '='.repeat((4 - (base64.length % 4)) % 4)));
+            return typeof payload?.exp === 'number' ? payload.exp * 1000 : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    // Renew an access token that is about to lapse, BEFORE a test starts, so the credential the
+    // embedded page receives covers the whole test. Best effort, always: a server that predates
+    // the refresh route (404), a network blip, or a chain past its renewal cap keeps the current
+    // token and the test proceeds on it. A raw API key never expires and is left alone.
+    async refreshCredentialIfNeeded(minRemainingMs = 2 * 60 * 1000) {
+        const expMs = this.credentialExpiresAtMs();
+        if (expMs === null || expMs - Date.now() > minRemainingMs) return false;
+        try {
+            const response = await fetch(`${this.config.backend_url}/sdk/central/access-token/refresh`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Api-Key': this.apiKey,
+                },
+            });
+            if (!response.ok) return false;
+            const result = await readJson(response);
+            if (typeof result.access_token === 'string' && result.access_token) {
+                this.apiKey = result.access_token;
+                return true;
+            }
+        } catch (error) {
+            // fall through: keep the current credential
+        }
+        return false;
     }
 
     // Wrapper method to verify API key and call additional APIs
@@ -558,6 +611,9 @@ class ISelfieTestInstance {
             try {
                 this.resolveTest = resolve; // Set resolve handler
                 this.rejectTest = reject; // Set reject handler
+
+                // A second test in the same session may start long after the token was minted.
+                await this.refreshCredentialIfNeeded();
 
                 const isAvailable = await this.checkOrgStatus();
 

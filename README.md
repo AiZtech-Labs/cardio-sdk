@@ -15,7 +15,7 @@ Add the SDK to your project using npm or include it via a `<script>` tag for dir
 - **Using a Script Tag:**
 
     ```html
-    <script src="https://cdn.jsdelivr.net/npm/@aiztechlabs/cardio-sdk@0.1.16/dist/iselfie-cardio-sdk.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@aiztechlabs/cardio-sdk@2.0.0/dist/iselfie-cardio-sdk.umd.min.js"></script>
     ```
 
     Always pin a version in the script URL (as above) so a future release cannot change your integration until you choose to upgrade.
@@ -32,7 +32,7 @@ const sdk = await ISelfieTestSDK({
   apiKey: "your-api-key", // When verificationMethod is 'apikey', this should be your API key
   appUserId: "user-id",
   verificationMethod: "apikey", // Optional: 'apikey' (default) or 'accesstoken' (case insensitive)
-  // entitlementSource: "legacy", // Optional: 'legacy' (default) or 'rbac' — see Initialization Parameters
+  // entitlementSource: "auto", // Optional: 'auto' (default), 'rbac' or 'legacy' — see Initialization Parameters
   options: {
     displayResults: false,
     enablePDFSharing: false,
@@ -72,7 +72,7 @@ const sdkWithToken = await ISelfieTestSDK({
   appUserId: "user-id",
   organizationId: "your-organization-id", // Required when using accesstoken verification
   verificationMethod: "accesstoken", // Case insensitive: 'accesstoken', 'accessToken', 'AccessToken', etc.
-  // entitlementSource: "legacy", // Optional: 'legacy' (default) or 'rbac' — see Initialization Parameters
+  // entitlementSource: "auto", // Optional: 'auto' (default), 'rbac' or 'legacy' — see Initialization Parameters
   options: {
     // ... same options as above
   },
@@ -98,7 +98,7 @@ In case of using direct script tag for HTML, use the code below.
       apiKey: "your-api-key", // When verificationMethod is 'apikey', this should be your API key
       appUserId: "user-id",
       verificationMethod: "apikey", // Optional: 'apikey' (default) or 'accesstoken' (case insensitive)
-      // entitlementSource: "legacy", // Optional: 'legacy' (default) or 'rbac' — see Initialization Parameters
+      // entitlementSource: "auto", // Optional: 'auto' (default), 'rbac' or 'legacy' — see Initialization Parameters
       options: {
         displayResults: false,
         enablePDFSharing: false,
@@ -183,12 +183,14 @@ Specifies the authentication method to use for SDK verification.
 **Default**: `"apikey"`  
 **Example**: `"apikey"` or `"accessToken"`  
 
-**`entitlementSource`**: (`"legacy"` | `"rbac"`, optional) - Case insensitive  
+**`entitlementSource`**: (`"auto"` | `"rbac"` | `"legacy"`, optional) - Case insensitive  
 Selects how the SDK decides whether a cardio test may start.  
-- **`"legacy"`** (default): Checks the organization's account type, trial window and subscription usage client-side, exactly as earlier releases did.  
-- **`"rbac"`**: Gates on the server's enforced entitlement block returned by the organization status endpoint. If the server sends no entitlement block, or reports that it is not enforcing, the SDK falls back to the legacy checks, so the option is safe to enable ahead of the backend rollout.  
-**Default**: `"legacy"`  
-**Example**: `"rbac"`  
+- **`"auto"`** (default since 2.0.0): Follows the server whenever the organization status endpoint returns an entitlement block **and** says it is enforcing; otherwise runs the legacy client-side checks. Once a server enforces, its answer is what the results call will be judged by, so this is the mode that never disagrees with the server.  
+- **`"rbac"`**: Gates on the server's entitlement block whenever one is present, even when the server reports it is not enforcing (in which case it allows). Falls back to the legacy checks only when no block is sent.  
+- **`"legacy"`**: Never looks at the block. Checks the organization's account type, trial window and subscription usage client-side, exactly as releases before 2.0.0 did by default.  
+Every mode keeps working against a server that sends no block.  
+**Default**: `"auto"`  
+**Example**: `"legacy"`  
 
 ## Options
 
@@ -750,6 +752,12 @@ The webhook response provides a comprehensive set of data about the test results
 - **Error Handling**: Logging and addressing any issues detected during the test.
 
 ## Changelog
+
+### 2.0.0
+
+- `entitlementSource` defaults to `"auto"`: when the server returns an entitlement block and reports that it is enforcing, the SDK follows the server's answer before opening the camera; otherwise it runs the legacy checks. Pass `entitlementSource: "legacy"` to keep the pre-2.0 behaviour. This is the only behaviour change, and it only applies against a server that enforces entitlements.
+- Before each `startCardioTest()`, an access token with less than two minutes left is renewed through the server's refresh exchange, so a second test in the same session does not start on a lapsed credential. Best effort: a server without the refresh route, or a token past its renewal cap, keeps the current token.
+- Everything in 0.1.16 below.
 
 ### 0.1.16
 
