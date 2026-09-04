@@ -516,6 +516,7 @@ When initialization is refused, `sdk.isAvailable.code` carries one of the codes 
 | `AIZERR009` | Invalid API key (`verificationMethod: "apikey"`). Also returned when the API answers 401/403 to the organization status or subscription request. |
 | `AIZERR010` | Product not entitled (`entitlementSource: "rbac"` and the server reports that the cardio product is not entitled). |
 | `AIZERR011` | Test cancelled. The embedded test was closed before it completed, so the pending `startCardioTest()` promise rejects instead of staying pending. |
+| `AIZERR012` | The service could not be reached, or it failed. Returned when verification gets no reply at all (offline, DNS, TLS, a connection reset, a blocked cross-origin request) and when it answers 5xx. Deliberately distinct from `AIZERR008`/`AIZERR009`: nothing here says the credential is bad, and renewing one will not help. |
 
 ## Test Result Response
 
@@ -764,6 +765,7 @@ The webhook response provides a comprehensive set of data about the test results
 Robustness-only patch. No behaviour change for a working integration.
 
 - Non-2xx responses from the verify, organization status and subscription endpoints are handled explicitly: 401/403 map to `AIZERR008` or `AIZERR009` (by `verificationMethod`), other statuses to `AIZERR004`. Non-JSON response bodies no longer throw.
+- **Verification failures now say what actually failed.** Every failure of `verifyApiKey()` used to be reported as `AIZERR008` / `AIZERR009` — a statement about the credential — including a request that never got a reply. A page showing "this link has expired" for a CORS block or an outage sends people to renew a credential that was never the problem. A thrown fetch and a 5xx are now `AIZERR012`, a 404 is `AIZERR007`, and only a real rejection (401/403, or a 200 that says no) reports the credential. Integrators matching on `AIZERR008` to trigger a token refresh should add `AIZERR012` as a retry-or-report case instead.
 - `startCardioTest()` can no longer stay pending forever: internal failures reject the promise, and a test closed before completing rejects with `AIZERR011`. Errors reported by the embedded test reject with an `Error` carrying `error.code`.
 - A `null` subscription list from the server is treated as empty instead of crashing.
 - The embedded test can hand a renewed access token up to the SDK (`iselfietest-credential` message); the SDK adopts it for later calls.

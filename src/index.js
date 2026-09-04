@@ -47,6 +47,12 @@ export const ERROR_CODES = {
     AIZERR011: {
         code: 'AIZERR011',
         note: 'Test cancelled'
+    },
+    // The request never got an answer, or the answer was the service failing. NOT a statement about
+    // the credential — see verificationFailureCode below for why that distinction is the point.
+    AIZERR012: {
+        code: 'AIZERR012',
+        note: 'Could not reach the service'
     }
 };
 
@@ -171,30 +177,49 @@ class ISelfieTestInstance {
             this.success = result.success;
             this.organization = result.organization || null;
             
-            // Handle specific error cases for different verification methods
             if (!result.success) {
-                if (this.verificationMethod?.toLowerCase() === 'accesstoken') {
-                    // Any failure from access token endpoint is AIZERR008
-                    result.errorCode = ERROR_CODES.AIZERR008.code;
-                    result.errorMessage = ERROR_CODES.AIZERR008.note;
-                } else {
-                    // Any failure from API key endpoint is AIZERR009
-                    result.errorCode = ERROR_CODES.AIZERR009.code;
-                    result.errorMessage = ERROR_CODES.AIZERR009.note;
-                }
+                const failure = this.verificationFailureCode(response);
+                result.errorCode = failure.code;
+                result.errorMessage = failure.note;
             }
             
             return result;
         } catch (error) {
+            // fetch() only throws when there was no reply at all — offline, DNS, TLS, a connection
+            // reset, or a CORS block. Passing no response says exactly that.
             console.error('API call failed:', error.message ?? error);
             this.success = false;
+            const failure = this.verificationFailureCode(null);
             return { 
                 success: false, 
                 message: error.message ?? 'Network error occurred',
-                errorCode: this.verificationMethod?.toLowerCase() === 'accesstoken' ? ERROR_CODES.AIZERR008.code : ERROR_CODES.AIZERR009.code,
-                errorMessage: this.verificationMethod?.toLowerCase() === 'accesstoken' ? ERROR_CODES.AIZERR008.note : ERROR_CODES.AIZERR009.note
+                errorCode: failure.code,
+                errorMessage: failure.note
             };
         }
+    }
+
+    // Which kind of failure verification hit.
+    //
+    // This used to answer AIZERR008 (accesstoken) or AIZERR009 (apikey) for every failure of any
+    // kind, and that is a claim about the CREDENTIAL. A page showing "this link has expired" when
+    // the browser could not reach the server at all — a CORS block, an outage, a phone with no
+    // signal — sends the person to mint a new credential that was never the problem, and hides the
+    // one that was. The same went for a 500: the service was down, and the integrator was told
+    // their token was invalid.
+    //
+    // So: only a rejection (401/403) or a server that answered 200 and said no is about the
+    // credential. Everything else says what it actually was.
+    verificationFailureCode(response) {
+        const credentialRefused = this.verificationMethod?.toLowerCase() === 'accesstoken'
+            ? ERROR_CODES.AIZERR008
+            : ERROR_CODES.AIZERR009;
+
+        if (!response) return ERROR_CODES.AIZERR012;                 // never got a reply
+        if (response.status === 401 || response.status === 403) return credentialRefused;
+        if (response.status === 404) return ERROR_CODES.AIZERR007;   // same mapping httpError uses
+        if (response.status >= 500) return ERROR_CODES.AIZERR012;    // the service, not the caller
+        return credentialRefused;                                    // incl. 200 with success:false
     }
 
     // Build the Error thrown for a non-2xx API response. 401/403 mean the credential was rejected,

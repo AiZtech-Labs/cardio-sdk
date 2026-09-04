@@ -172,13 +172,41 @@ describe('initialize — verification', () => {
         expect(calledUrls(fetchMock)).toEqual([VERIFY_URL]);
     });
 
-    test('network failure on verify → coded failure, no throw', async () => {
+    // A thrown fetch means there was NO reply — offline, DNS, TLS, a reset, or a CORS block. It is
+    // not evidence about the credential, and reporting it as one had the /partner-cardio page tell
+    // people "this link has expired" while holding a token with 58 minutes left on it.
+    test('network failure on verify → AIZERR012, not a credential code', async () => {
         const { sdk } = await initSdk(ACCESS_TOKEN_CONFIG, {
             verify: new TypeError('Failed to fetch'),
         });
 
         expect(sdk.success).toBe(false);
-        expect(sdk.isAvailable.code).toBe('AIZERR008');
+        expect(sdk.isAvailable.code).toBe('AIZERR012');
+    });
+
+    test('network failure in apikey mode is AIZERR012 too — the method does not change the cause', async () => {
+        const { sdk } = await initSdk(API_KEY_CONFIG, {
+            verify: new TypeError('Failed to fetch'),
+        });
+
+        expect(sdk.isAvailable.code).toBe('AIZERR012');
+    });
+
+    test('verify 500 → AIZERR012: the service failed, the credential did not', async () => {
+        const { sdk } = await initSdk(ACCESS_TOKEN_CONFIG, {
+            verify: { status: 500, body: { message: 'Internal Server Error' } },
+        });
+
+        expect(sdk.success).toBe(false);
+        expect(sdk.isAvailable.code).toBe('AIZERR012');
+    });
+
+    test('verify 404 → AIZERR007, the same mapping httpError uses for a missing org', async () => {
+        const { sdk } = await initSdk(ACCESS_TOKEN_CONFIG, {
+            verify: { status: 404, body: { message: 'Organization not found' } },
+        });
+
+        expect(sdk.isAvailable.code).toBe('AIZERR007');
     });
 });
 
