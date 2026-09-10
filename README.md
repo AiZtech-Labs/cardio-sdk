@@ -15,8 +15,10 @@ Add the SDK to your project using npm or include it via a `<script>` tag for dir
 - **Using a Script Tag:**
 
     ```html
-    <script src="https://cdn.jsdelivr.net/npm/@aiztechlabs/cardio-sdk/dist/iselfie-cardio-sdk.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@aiztechlabs/cardio-sdk@2.0.0/dist/iselfie-cardio-sdk.umd.min.js"></script>
     ```
+
+    Always pin a version in the script URL (as above) so a future release cannot change your integration until you choose to upgrade.
 
 ## Initialize the SDK
 
@@ -30,6 +32,7 @@ const sdk = await ISelfieTestSDK({
   apiKey: "your-api-key", // When verificationMethod is 'apikey', this should be your API key
   appUserId: "user-id",
   verificationMethod: "apikey", // Optional: 'apikey' (default) or 'accesstoken' (case insensitive)
+  // entitlementSource: "auto", // Optional: 'auto' (default), 'rbac' or 'legacy' — see Initialization Parameters
   options: {
     displayResults: false,
     enablePDFSharing: false,
@@ -69,6 +72,7 @@ const sdkWithToken = await ISelfieTestSDK({
   appUserId: "user-id",
   organizationId: "your-organization-id", // Required when using accesstoken verification
   verificationMethod: "accesstoken", // Case insensitive: 'accesstoken', 'accessToken', 'AccessToken', etc.
+  // entitlementSource: "auto", // Optional: 'auto' (default), 'rbac' or 'legacy' — see Initialization Parameters
   options: {
     // ... same options as above
   },
@@ -94,6 +98,7 @@ In case of using direct script tag for HTML, use the code below.
       apiKey: "your-api-key", // When verificationMethod is 'apikey', this should be your API key
       appUserId: "user-id",
       verificationMethod: "apikey", // Optional: 'apikey' (default) or 'accesstoken' (case insensitive)
+      // entitlementSource: "auto", // Optional: 'auto' (default), 'rbac' or 'legacy' — see Initialization Parameters
       options: {
         displayResults: false,
         enablePDFSharing: false,
@@ -177,6 +182,15 @@ Specifies the authentication method to use for SDK verification.
 **Note**: This parameter is case insensitive, so `"accesstoken"`, `"accessToken"`, `"AccessToken"`, etc. are all valid.  
 **Default**: `"apikey"`  
 **Example**: `"apikey"` or `"accessToken"`  
+
+**`entitlementSource`**: (`"auto"` | `"rbac"` | `"legacy"`, optional) - Case insensitive  
+Selects how the SDK decides whether a cardio test may start.  
+- **`"auto"`** (default since 2.0.0): Follows the server whenever the organization status endpoint returns an entitlement block **and** says it is enforcing; otherwise runs the legacy client-side checks. Once a server enforces, its answer is what the results call will be judged by, so this is the mode that never disagrees with the server.  
+- **`"rbac"`**: Gates on the server's entitlement block whenever one is present, even when the server reports it is not enforcing (in which case it allows). Falls back to the legacy checks only when no block is sent.  
+- **`"legacy"`**: Never looks at the block. Checks the organization's account type, trial window and subscription usage client-side, exactly as releases before 2.0.0 did by default.  
+Every mode keeps working against a server that sends no block.  
+**Default**: `"auto"`  
+**Example**: `"legacy"`  
 
 ## Options
 
@@ -451,7 +465,7 @@ The `startCardioTest()` method initiates the cardio test process. This method ca
     #### Behavior
 
     - Success (`.then`): The test results are returned in the result object. This can include details such as measurements, timestamps, and test-specific outcomes.
-    - Error (`.catch`): Any issues during the test (e.g., connection failures, user interruptions, or invalid configurations) are captured as error for logging or user feedback.
+    - Error (`.catch`): Any issues during the test (e.g., connection failures, user interruptions, or invalid configurations) are captured as error for logging or user feedback. The rejection is an `Error`; when the SDK refused the test, the embedded test reported a coded error, or the test was closed before completing, `error.code` carries one of the codes listed under [Error Codes](#error-codes).
 
 **Note**: Ensure that the SDK is properly initialized before calling `startCardioTest()`. Due to iOS restrictions requiring playback to be initiated through user interaction, the `disableAudio` option   cannot be set to false (audio enabled) while the `instructionPage.hidden` option is set to true. In this scenario, the SDK displays a "Continue" button without additional instructions, allowing users to initiate audio playback on the test screen.
 
@@ -485,6 +499,24 @@ When a webhook is configured through the developer dashboard, it will be trigger
   }
 }
 ```
+
+## Error Codes
+
+When initialization is refused, `sdk.isAvailable.code` carries one of the codes below and `sdk.message` the matching description. `startCardioTest()` rejects with an `Error` whose `error.code` is set to the same codes. This includes the cases where the embedded test page reports a coded error and where the test is closed before it completes, so a pending `startCardioTest()` promise always settles. The npm package also exports the map as `ERROR_CODES` (for example `ERROR_CODES.AIZERR001.code === 'AIZERR001'`).
+
+| Code | Description |
+| --- | --- |
+| `AIZERR001` | Trial expired |
+| `AIZERR002` | Trial usage limit exceeded |
+| `AIZERR003` | Active subscription usage limit exceeded |
+| `AIZERR004` | No active subscription. Also returned when the organization status or subscription request fails with an HTTP error other than 401/403/404, or with a network error. |
+| `AIZERR005` | Domain not allowed or invalid API key. `ERROR_CODES.AIZERR006` is kept as an alias of this entry for integrations that referenced the old key. |
+| `AIZERR007` | Invalid organization ID. Also returned when the organization status or subscription request answers 404. |
+| `AIZERR008` | Invalid access token (`verificationMethod: "accesstoken"`). Also returned when the API answers 401/403 to the organization status or subscription request. |
+| `AIZERR009` | Invalid API key (`verificationMethod: "apikey"`). Also returned when the API answers 401/403 to the organization status or subscription request. |
+| `AIZERR010` | Product not entitled (`entitlementSource: "rbac"` and the server reports that the cardio product is not entitled). |
+| `AIZERR011` | Test cancelled. The embedded test was closed before it completed, so the pending `startCardioTest()` promise rejects instead of staying pending. |
+| `AIZERR012` | The service could not be reached, or it failed. Returned when verification gets no reply at all (offline, DNS, TLS, a connection reset, a blocked cross-origin request) and when it answers 5xx. Deliberately distinct from `AIZERR008`/`AIZERR009`: nothing here says the credential is bad, and renewing one will not help. |
 
 ## Test Result Response
 
@@ -719,3 +751,28 @@ The webhook response provides a comprehensive set of data about the test results
 - **Analytics**: Aggregating metrics like heart rate, respiratory rate, and blood pressure.
 - **User Feedback**: Sending test outcomes back to the user.
 - **Error Handling**: Logging and addressing any issues detected during the test.
+
+## Changelog
+
+### 2.0.0
+
+- `entitlementSource` defaults to `"auto"`: when the server returns an entitlement block and reports that it is enforcing, the SDK follows the server's answer before opening the camera; otherwise it runs the legacy checks. Pass `entitlementSource: "legacy"` to keep the pre-2.0 behaviour. This is the only behaviour change, and it only applies against a server that enforces entitlements.
+- Before each `startCardioTest()`, an access token with less than two minutes left is renewed through the server's refresh exchange, so a second test in the same session does not start on a lapsed credential. Best effort: a server without the refresh route, or a token past its renewal cap, keeps the current token.
+- Everything in 0.1.16 below.
+
+### 0.1.16
+
+Robustness-only patch. No behaviour change for a working integration.
+
+- Non-2xx responses from the verify, organization status and subscription endpoints are handled explicitly: 401/403 map to `AIZERR008` or `AIZERR009` (by `verificationMethod`), other statuses to `AIZERR004`. Non-JSON response bodies no longer throw.
+- **Verification failures now say what actually failed.** Every failure of `verifyApiKey()` used to be reported as `AIZERR008` / `AIZERR009` — a statement about the credential — including a request that never got a reply. A page showing "this link has expired" for a CORS block or an outage sends people to renew a credential that was never the problem. A thrown fetch and a 5xx are now `AIZERR012`, a 404 is `AIZERR007`, and only a real rejection (401/403, or a 200 that says no) reports the credential. Integrators matching on `AIZERR008` to trigger a token refresh should add `AIZERR012` as a retry-or-report case instead.
+- `startCardioTest()` can no longer stay pending forever: internal failures reject the promise, and a test closed before completing rejects with `AIZERR011`. Errors reported by the embedded test reject with an `Error` carrying `error.code`.
+- A `null` subscription list from the server is treated as empty instead of crashing.
+- The embedded test can hand a renewed access token up to the SDK (`iselfietest-credential` message); the SDK adopts it for later calls.
+- `ERROR_CODES.AIZERR006` is restored as an alias of `ERROR_CODES.AIZERR005` (same `'AIZERR005'` code). New `AIZERR011` (Test cancelled).
+
+### 0.1.15
+
+- New `entitlementSource` option (`'legacy'` default, `'rbac'`). With `'rbac'` the SDK gates on the server's enforced entitlement block returned by the organization status endpoint and falls back to the legacy checks when the server sends none.
+- New error code `AIZERR010` (Product not entitled).
+- An expired trial is reported as `AIZERR001` (not `AIZERR010`) on the rbac path.

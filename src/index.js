@@ -20,7 +20,11 @@ export const ERROR_CODES = {
         code: 'AIZERR004',
         note: 'No active subscription'
     },
-    AIZERR006: {
+    // Keyed AIZERR005 to match the code it emits. It was keyed AIZERR006 while emitting
+    // 'AIZERR005', so `ERROR_CODES.AIZERR006.code` read back a different string than its own name —
+    // the KEY was the typo, not the code. Renaming the key keeps the wire value integrators already
+    // match on unchanged; changing the code would have broken them.
+    AIZERR005: {
         code: 'AIZERR005',
         note: 'Domain not allowed or Invalid API key'
     },
@@ -35,8 +39,39 @@ export const ERROR_CODES = {
     AIZERR009: {
         code: 'AIZERR009',
         note: 'Invalid API key'
+    },
+    AIZERR010: {
+        code: 'AIZERR010',
+        note: 'Product not entitled'
+    },
+    AIZERR011: {
+        code: 'AIZERR011',
+        note: 'Test cancelled'
+    },
+    // The request never got an answer, or the answer was the service failing. NOT a statement about
+    // the credential — see verificationFailureCode below for why that distinction is the point.
+    AIZERR012: {
+        code: 'AIZERR012',
+        note: 'Could not reach the service'
     }
 };
+
+// Backward-compatible alias. Releases up to 0.1.14 exported the 'AIZERR005' entry under the key
+// AIZERR006, so integrators may reference `ERROR_CODES.AIZERR006.code`. Aliasing (not copying) the
+// same object keeps that expression working and still reading 'AIZERR005', the wire value.
+ERROR_CODES.AIZERR006 = ERROR_CODES.AIZERR005;
+
+// Parse a fetch Response body as JSON. Returns {} when the body is empty or not JSON (an HTML
+// error page from a proxy, a 204, a truncated response) so callers can read fields off the
+// result with plain property access instead of crashing on the parse.
+async function readJson(response) {
+    try {
+        const body = await response.json();
+        return body && typeof body === 'object' ? body : {};
+    } catch (error) {
+        return {};
+    }
+}
 
 // Class representing the iSelfieTest instance
 class ISelfieTestInstance {
@@ -57,6 +92,17 @@ class ISelfieTestInstance {
         this.organizationId = _config?.organizationId || ''; // Organization ID
         this.containerId = _config?.containerId || 'iselfietest'; // ID of the container for the iframe
         this.verificationMethod = _config?.verificationMethod || 'apikey'; // Verification method: 'apikey' or 'accesstoken' (case insensitive)
+        // Entitlement source — how the SDK decides whether a test may start:
+        //   'auto'   (default since 2.0.0) follow the server when it sends an entitlement block in
+        //            orgStatus AND says it is enforcing; otherwise run the legacy client-side check.
+        //            Once a server enforces, its answer is what the results call will be judged by,
+        //            so the client-side arithmetic can only disagree with it.
+        //   'rbac'   gate on the server's block whenever it is present (also at off/shadow, where
+        //            it allows); legacy check only when no block is sent.
+        //   'legacy' never look at the block; the pre-2.0 behaviour.
+        // Old servers send no block, so every mode keeps working against them.
+        this.entitlementSource = String(_config?.entitlementSource || 'auto').toLowerCase();
+        if (!['auto', 'rbac', 'legacy'].includes(this.entitlementSource)) this.entitlementSource = 'auto';
 
         // Options for customizing the test
         this.options = {
@@ -122,40 +168,83 @@ class ISelfieTestInstance {
                 });
             }
             
-            result = await response.json();
+            result = await readJson(response);
+            if (!response.ok) {
+                // A non-2xx status (401/403/5xx, or a proxy error page) is a failed verification
+                // even when the body carries no `success` flag; the code mapping below applies.
+                result.success = false;
+            }
             this.success = result.success;
             this.organization = result.organization || null;
             
-            // Handle specific error cases for different verification methods
             if (!result.success) {
-                if (this.verificationMethod?.toLowerCase() === 'accesstoken') {
-                    // Any failure from access token endpoint is AIZERR008
-                    result.errorCode = ERROR_CODES.AIZERR008.code;
-                    result.errorMessage = ERROR_CODES.AIZERR008.note;
-                } else {
-                    // Any failure from API key endpoint is AIZERR009
-                    result.errorCode = ERROR_CODES.AIZERR009.code;
-                    result.errorMessage = ERROR_CODES.AIZERR009.note;
-                }
+                const failure = this.verificationFailureCode(response);
+                result.errorCode = failure.code;
+                result.errorMessage = failure.note;
             }
             
             return result;
         } catch (error) {
+            // fetch() only throws when there was no reply at all — offline, DNS, TLS, a connection
+            // reset, or a CORS block. Passing no response says exactly that.
             console.error('API call failed:', error.message ?? error);
             this.success = false;
+            const failure = this.verificationFailureCode(null);
             return { 
                 success: false, 
                 message: error.message ?? 'Network error occurred',
-                errorCode: this.verificationMethod?.toLowerCase() === 'accesstoken' ? ERROR_CODES.AIZERR008.code : ERROR_CODES.AIZERR009.code,
-                errorMessage: this.verificationMethod?.toLowerCase() === 'accesstoken' ? ERROR_CODES.AIZERR008.note : ERROR_CODES.AIZERR009.note
+                errorCode: failure.code,
+                errorMessage: failure.note
             };
         }
     }
 
+    // Which kind of failure verification hit.
+    //
+    // This used to answer AIZERR008 (accesstoken) or AIZERR009 (apikey) for every failure of any
+    // kind, and that is a claim about the CREDENTIAL. A page showing "this link has expired" when
+    // the browser could not reach the server at all — a CORS block, an outage, a phone with no
+    // signal — sends the person to mint a new credential that was never the problem, and hides the
+    // one that was. The same went for a 500: the service was down, and the integrator was told
+    // their token was invalid.
+    //
+    // So: only a rejection (401/403) or a server that answered 200 and said no is about the
+    // credential. Everything else says what it actually was.
+    verificationFailureCode(response) {
+        const credentialRefused = this.verificationMethod?.toLowerCase() === 'accesstoken'
+            ? ERROR_CODES.AIZERR008
+            : ERROR_CODES.AIZERR009;
+
+        if (!response) return ERROR_CODES.AIZERR012;                 // never got a reply
+        if (response.status === 401 || response.status === 403) return credentialRefused;
+        if (response.status === 404) return ERROR_CODES.AIZERR007;   // same mapping httpError uses
+        if (response.status >= 500) return ERROR_CODES.AIZERR012;    // the service, not the caller
+        return credentialRefused;                                    // incl. 200 with success:false
+    }
+
+    // Build the Error thrown for a non-2xx API response. 401/403 mean the credential was rejected,
+    // so they map to the same code verifyApiKey() reports for this verification method; 404 means
+    // the organization the credential named does not exist (AIZERR007); any other status (429,
+    // 5xx, a proxy page) is reported as AIZERR004 so the caller still receives a code.
+    httpError(response, body, fallbackMessage) {
+        const error = new Error(body?.message || fallbackMessage);
+        if (response.status === 401 || response.status === 403) {
+            error.code = this.verificationMethod?.toLowerCase() === 'accesstoken'
+                ? ERROR_CODES.AIZERR008.code
+                : ERROR_CODES.AIZERR009.code;
+        } else if (response.status === 404) {
+            error.code = ERROR_CODES.AIZERR007.code;
+        } else {
+            error.code = ERROR_CODES.AIZERR004.code;
+        }
+        return error;
+    }
+
     // Fetch organization status
     async fetchOrgStatus() {
+        let response;
         try {
-            const response = await fetch(`${this.config.backend_url}/sdk/central/orgStatus`, {
+            response = await fetch(`${this.config.backend_url}/sdk/central/orgStatus`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -165,11 +254,14 @@ class ISelfieTestInstance {
                     organizationId: this.organization._id, // Include the orgId in the request body
                 }),
             });
-            const result = await response.json();
-            return result.data; // Return orgStatus result
         } catch (error) {
             throw new Error('Failed to fetch organization status.');
         }
+        const result = await readJson(response);
+        if (!response.ok) {
+            throw this.httpError(response, result, 'Failed to fetch organization status.');
+        }
+        return result.data; // Return orgStatus result
     }
 
     // Fetch subscription list
@@ -177,89 +269,208 @@ class ISelfieTestInstance {
         if (!this.organization?._id) {
             throw new Error('Organization ID not available.');
         }
+        let response;
         try {
-            const response = await fetch(`${this.config.backend_url}/subscription/central/sdk/${this.organization._id}/list`, {
+            response = await fetch(`${this.config.backend_url}/subscription/central/sdk/${this.organization._id}/list`, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Api-Key': this.apiKey,
                 },
             });
-            const result = await response.json();
-            return result.subscriptions; // Return subscription list result
         } catch (error) {
             throw new Error('Failed to fetch subscription list.');
         }
+        const result = await readJson(response);
+        if (!response.ok) {
+            throw this.httpError(response, result, 'Failed to fetch subscription list.');
+        }
+        // A missing or null `subscriptions` value must read as "no subscriptions", not crash the
+        // caller's .filter().
+        return Array.isArray(result.subscriptions) ? result.subscriptions : [];
+    }
+
+    // Is this denial an expired trial rather than a missing product?
+    //
+    // Three signals, in descending order of directness, because a given backend may only offer some:
+    //   reason 'trial_expired' — the server said so outright (newest servers).
+    //   expired:true           — the meter's trial window has passed but the org's accountType has
+    //                            not flipped yet, so the resolver still sees a live trial.
+    //   accountType            — from verifyApiKey's organization. This is the fallback that keeps
+    //                            the SDK correct against a backend predating either field, and it is
+    //                            also the ONLY reliable signal once an operator override is set: the
+    //                            server's expiry check requires source==='trial', so an override
+    //                            silently suppresses `expired`.
+    isTrialExpired(product) {
+        return (
+            product?.reason === 'trial_expired' ||
+            !!product?.expired ||
+            String(this.organization?.accountType || '').toLowerCase() === 'trial_expired'
+        );
+    }
+
+    // Gate on the server's enforced entitlement block (orgStatus.entitlement). The server computes
+    // it from the same meter the API enforces with, so this refuses BEFORE the camera opens instead
+    // of scanning and being 402'd at the results call. Only blocks when the server says
+    // mode:'enforce' — at off/shadow the backend would serve the test, so we must not refuse it.
+    checkRbacEntitlement(entitlement) {
+        if (entitlement?.mode !== 'enforce') {
+            return { value: true, message: `Entitlement mode ${entitlement?.mode || 'unknown'} — server not enforcing` };
+        }
+        const cardio = entitlement?.products?.cardio;
+        if (!cardio) return { value: true, message: 'No cardio entitlement data — deferring to server' };
+        if (cardio.entitled === false) {
+            // An expired trial and a product that was never sold are BOTH entitled:false, so this
+            // branch has to separate them or every denial reads as "you don't own this". The legacy
+            // check below distinguishes them (accountType 'trial_expired' -> AIZERR001), and
+            // integrators handle that code today, so losing it here would be a silent regression.
+            const err = this.isTrialExpired(cardio) ? ERROR_CODES.AIZERR001 : ERROR_CODES.AIZERR010;
+            console.error(err.note);
+            return { value: false, message: err.note, code: err.code };
+        }
+        if (cardio.expired) {
+            console.error(ERROR_CODES.AIZERR001.note);
+            return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
+        }
+        if (!cardio.unlimited && cardio.remaining !== null && cardio.remaining <= 0) {
+            console.error(ERROR_CODES.AIZERR002.note);
+            return { value: false, message: 'Usage limit exceeded', code: ERROR_CODES.AIZERR002.code };
+        }
+        return { value: true, message: 'Entitled' };
     }
 
     // Check organization status
     async checkOrgStatus() {
-        // Fetch additional data
-        const orgStatus = await this.fetchOrgStatus();
-        const subscriptionList = await this.fetchSubscriptionList();
+        try {
+            // Fetch additional data
+            const orgStatus = await this.fetchOrgStatus();
 
-        const accountType = orgStatus?.accountType;
-        const totalCardioTestCount = orgStatus?.totalCardioTestCount || 0;
-
-        const activeSubscriptions = subscriptionList.filter(
-            (sub) => sub?.productType === "cardio" && sub?.stripe?.status === "active"
-        );
-
-        if (accountType === 'free') {
-            return { value: true, message: 'Free account' };
-        }
-
-        if (accountType === 'trial_expired') {
-            console.error(ERROR_CODES.AIZERR001.note);
-            return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
-        }
-
-        if (accountType === 'trial') {
-            // Check if trial has expired
-            const trialEnd = new Date(this.organization?.trialEnd);
-            const now = new Date();
-
-            // Check if trialEnd is valid and compare dates
-            if (isAfter(now, trialEnd)) {
-                console.error(ERROR_CODES.AIZERR001.note);
-                return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
+            // Server-driven path. 'rbac': the block is authoritative whenever present. 'auto': only
+            // when the server says it is ENFORCING — at off/shadow the server would serve the test
+            // whatever the block says, so the legacy check keeps deciding, exactly as before 2.0.
+            // A legacy server sends no block, so the legacy checks below keep working unchanged.
+            const block = orgStatus?.entitlement;
+            if (block && (this.entitlementSource === 'rbac' ||
+                (this.entitlementSource === 'auto' && block.mode === 'enforce'))) {
+                return this.checkRbacEntitlement(block);
             }
 
-            // Check if trial usage limit has been exceeded
-            const cardioTrialTestLimit = this.organization?.cardioTrialTestLimit || 0;
-            const remainingCardioTests = cardioTrialTestLimit - totalCardioTestCount;
-            if (remainingCardioTests > 0) {
-                return { value: true, message: 'Active trial account' };
-            } else {
-                console.error(ERROR_CODES.AIZERR002.note);
-                return { value: false, message: 'Trial usage limit exceeded', code: ERROR_CODES.AIZERR002.code };
-            }
-        }
-        if (accountType === 'active') {
-            const { cardio } = orgStatus?.testLimitByCurrentSubscription;
-            const cardioCount = cardio.testLimit
-                ? cardio.testLimit.interval_count * cardio.testLimit.unit
-                : 0;
-            const remainingCardioTests = cardioCount - totalCardioTestCount;
+            const subscriptionList = await this.fetchSubscriptionList();
+
+            const accountType = orgStatus?.accountType;
+            const totalCardioTestCount = orgStatus?.totalCardioTestCount || 0;
 
             const activeSubscriptions = subscriptionList.filter(
                 (sub) => sub?.productType === "cardio" && sub?.stripe?.status === "active"
             );
 
-            if (remainingCardioTests > 0 && activeSubscriptions.length > 0) {
-                return { value: true, message: 'Active subscription' };
-            } else {
-                console.error(ERROR_CODES.AIZERR003.note);
-                return { value: false, message: 'Active subscription usage limit exceeded', code: ERROR_CODES.AIZERR003.code };
+            if (accountType === 'free') {
+                return { value: true, message: 'Free account' };
             }
-        }
 
-        if (accountType === 'active' && activeSubscriptions.length === 0) {
-            console.error(ERROR_CODES.AIZERR004.note);
+            if (accountType === 'trial_expired') {
+                console.error(ERROR_CODES.AIZERR001.note);
+                return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
+            }
+
+            if (accountType === 'trial') {
+                // Check if trial has expired
+                const trialEnd = new Date(this.organization?.trialEnd);
+                const now = new Date();
+
+                // Check if trialEnd is valid and compare dates
+                if (isAfter(now, trialEnd)) {
+                    console.error(ERROR_CODES.AIZERR001.note);
+                    return { value: false, message: 'Trial expired', code: ERROR_CODES.AIZERR001.code };
+                }
+
+                // Check if trial usage limit has been exceeded
+                const cardioTrialTestLimit = this.organization?.cardioTrialTestLimit || 0;
+                const remainingCardioTests = cardioTrialTestLimit - totalCardioTestCount;
+                if (remainingCardioTests > 0) {
+                    return { value: true, message: 'Active trial account' };
+                } else {
+                    console.error(ERROR_CODES.AIZERR002.note);
+                    return { value: false, message: 'Trial usage limit exceeded', code: ERROR_CODES.AIZERR002.code };
+                }
+            }
+            if (accountType === 'active') {
+                const cardio = orgStatus?.testLimitByCurrentSubscription?.cardio;
+                const cardioCount = cardio?.testLimit
+                    ? cardio.testLimit.interval_count * cardio.testLimit.unit
+                    : 0;
+                const remainingCardioTests = cardioCount - totalCardioTestCount;
+
+                const activeSubscriptions = subscriptionList.filter(
+                    (sub) => sub?.productType === "cardio" && sub?.stripe?.status === "active"
+                );
+
+                if (remainingCardioTests > 0 && activeSubscriptions.length > 0) {
+                    return { value: true, message: 'Active subscription' };
+                } else {
+                    console.error(ERROR_CODES.AIZERR003.note);
+                    return { value: false, message: 'Active subscription usage limit exceeded', code: ERROR_CODES.AIZERR003.code };
+                }
+            }
+
+            if (accountType === 'active' && activeSubscriptions.length === 0) {
+                console.error(ERROR_CODES.AIZERR004.note);
+                return { value: false, message: 'No active subscription', code: ERROR_CODES.AIZERR004.code };
+            }
+
             return { value: false, message: 'No active subscription', code: ERROR_CODES.AIZERR004.code };
+        } catch (error) {
+            // A failed status/subscription request (auth rejected, 5xx, network) becomes a coded
+            // refusal instead of an exception, so initialize() and startTest() always settle.
+            console.error('Organization status check failed:', error?.message ?? error);
+            return {
+                value: false,
+                message: error?.message || 'Failed to check organization status.',
+                code: error?.code || ERROR_CODES.AIZERR004.code
+            };
         }
+    }
 
-        return { value: false, message: 'No active subscription', code: ERROR_CODES.AIZERR004.code };
+    // Expiry of the credential when it is an SDK access token (a JWT with `exp`), else null for
+    // a raw API key. The signature is not checked here — the server does that.
+    credentialExpiresAtMs() {
+        if (typeof this.apiKey !== 'string') return null;
+        const parts = this.apiKey.split('.');
+        if (parts.length !== 3) return null;
+        try {
+            const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+            const payload = JSON.parse(atob(base64 + '='.repeat((4 - (base64.length % 4)) % 4)));
+            return typeof payload?.exp === 'number' ? payload.exp * 1000 : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    // Renew an access token that is about to lapse, BEFORE a test starts, so the credential the
+    // embedded page receives covers the whole test. Best effort, always: a server that predates
+    // the refresh route (404), a network blip, or a chain past its renewal cap keeps the current
+    // token and the test proceeds on it. A raw API key never expires and is left alone.
+    async refreshCredentialIfNeeded(minRemainingMs = 2 * 60 * 1000) {
+        const expMs = this.credentialExpiresAtMs();
+        if (expMs === null || expMs - Date.now() > minRemainingMs) return false;
+        try {
+            const response = await fetch(`${this.config.backend_url}/sdk/central/access-token/refresh`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Api-Key': this.apiKey,
+                },
+            });
+            if (!response.ok) return false;
+            const result = await readJson(response);
+            if (typeof result.access_token === 'string' && result.access_token) {
+                this.apiKey = result.access_token;
+                return true;
+            }
+        } catch (error) {
+            // fall through: keep the current credential
+        }
+        return false;
     }
 
     // Wrapper method to verify API key and call additional APIs
@@ -278,8 +489,8 @@ class ISelfieTestInstance {
             } else if (result.message === 'Verification failed across all regions. Invalid public key or domain.') {
                 const availability = {
                     value: false,
-                    message: ERROR_CODES.AIZERR006.note,
-                    code: ERROR_CODES.AIZERR006.code
+                    message: ERROR_CODES.AIZERR005.note,
+                    code: ERROR_CODES.AIZERR005.code
                 };
                 this.isAvailable = availability;
                 return this.isAvailable;
@@ -372,59 +583,96 @@ class ISelfieTestInstance {
         }, 1000);
     }
 
+    // Settle the pending startTest() promise, if any, and drop the handlers so a later message
+    // (a second 'message' listener, a stray close) cannot touch an already-settled test.
+    settleTest(kind, payload) {
+        const settle = kind === 'reject' ? this.rejectTest : this.resolveTest;
+        this.resolveTest = null;
+        this.rejectTest = null;
+        settle?.(payload);
+    }
+
     // Method to handle incoming messages from the iframe
     handleIncomingMessages(event) {
-        const { type, data } = event.data;
+        const { type, data } = event.data || {};
 
-        if (type === 'iselfietest-close') this.closeTest(); // Close the test on 'close' message
+        if (type === 'iselfietest-close') {
+            // A closed test can never complete, so a still-pending promise must be rejected
+            // rather than left pending forever.
+            if (this.resolveTest) {
+                const error = new Error(ERROR_CODES.AIZERR011.note);
+                error.code = ERROR_CODES.AIZERR011.code;
+                this.settleTest('reject', error);
+            }
+            this.closeTest(); // Close the test on 'close' message
+        }
 
         if (type === 'iselfietest-complete') {
-            this.resolveTest?.(data); // Resolve the test promise with data
+            this.settleTest('resolve', data); // Resolve the test promise with data
             this.closeTest(); // Close the iframe
         }
 
         if (type === 'iselfietest-error') {
-            this.rejectTest?.(data); // Reject the test promise with error data
+            const error = new Error(data?.message || 'Test failed');
+            if (data?.code) error.code = data.code; // Carry the embedded page's code up to .catch()
+            this.settleTest('reject', error); // Reject the test promise with the error
             this.closeTest(); // Close the iframe
+        }
+
+        if (type === 'iselfietest-credential') {
+            // The embedded page renews the short-lived access token and hands the new one up;
+            // adopting it keeps later startTest() calls (and their API requests) working.
+            if (typeof data?.apiKey === 'string' && data.apiKey) {
+                this.apiKey = data.apiKey;
+            }
         }
     }
 
     // Method to start the test
     startTest() {
         return new Promise(async (resolve, reject) => {
-            this.resolveTest = resolve; // Set resolve handler
-            this.rejectTest = reject; // Set reject handler
+            // An async executor swallows its own throws, which would leave the promise pending
+            // forever; route anything unexpected to reject() instead.
+            try {
+                this.resolveTest = resolve; // Set resolve handler
+                this.rejectTest = reject; // Set reject handler
 
-            const isAvailable = await this.checkOrgStatus();
+                // A second test in the same session may start long after the token was minted.
+                await this.refreshCredentialIfNeeded();
 
-            if(!isAvailable?.value) {
-                const errorMessage = isAvailable?.message || 'You have reached the maximum limit of cardio test usage policy. Please reach out to administrator.';
-                const error = new Error(errorMessage);
-                if (isAvailable?.code) {
-                    error.code = isAvailable.code;
+                const isAvailable = await this.checkOrgStatus();
+
+                if(!isAvailable?.value) {
+                    const errorMessage = isAvailable?.message || 'You have reached the maximum limit of cardio test usage policy. Please reach out to administrator.';
+                    const error = new Error(errorMessage);
+                    if (isAvailable?.code) {
+                        error.code = isAvailable.code;
+                    }
+                    reject(error);
+                    return;
                 }
+
+                // Try creating the iframe with retries
+                const tryCreateIframe = (retryCount = 0) => {
+                    const container = document.getElementById(this.containerId);
+
+                    if (container) {
+                        this.createIframe(container);
+                    } else if (retryCount < 3) {
+                        console.warn(
+                            `Container element with ID "${this.containerId}" not found. Retrying... (${retryCount + 1}/3)`
+                        );
+                        setTimeout(() => tryCreateIframe(retryCount + 1), 1000); // Retry after 1 second
+                    } else {
+                        console.error(`Container element with ID "${this.containerId}" not found after 3 attempts.`);
+                        reject(new Error(`Container element with ID "${this.containerId}" not found.`));
+                    }
+                };
+
+                tryCreateIframe();
+            } catch (error) {
                 reject(error);
-                return;
             }
-    
-            // Try creating the iframe with retries
-            const tryCreateIframe = (retryCount = 0) => {
-                const container = document.getElementById(this.containerId);
-
-                if (container) {
-                    this.createIframe(container);
-                } else if (retryCount < 3) {
-                    console.warn(
-                        `Container element with ID "${this.containerId}" not found. Retrying... (${retryCount + 1}/3)`
-                    );
-                    setTimeout(() => tryCreateIframe(retryCount + 1), 1000); // Retry after 1 second
-                } else {
-                    console.error(`Container element with ID "${this.containerId}" not found after 3 attempts.`);
-                    reject(new Error(`Container element with ID "${this.containerId}" not found.`));
-                }
-            };
-
-            tryCreateIframe();
         });
     }
 
